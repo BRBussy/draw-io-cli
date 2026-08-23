@@ -86,6 +86,13 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    Fractional attachment points (exitX as a fraction of the shape's width) rarely land on
    integer coordinates: use the exitDx/exitDy and entryDx/entryDy pixel offsets to pin a
    run to an exact x or y.
+6. Line jumps (`jumpStyle=arc;jumpSize=10`) are z-order dependent: draw.io renders the hop
+   on the edge that crosses another declared EARLIER in the XML. Put the style on the
+   later-declared edge of the crossing pair, and verify the hop actually renders by eye:
+   no static check can see it.
+7. `sips --cropOffset` silently leaves the file uncropped when passed a 0 offset (and its
+   placement is unreliable in general): never pass 0, and always assert the output
+   dimensions after a crop before trusting what you Read.
 
 1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
    placeholders appear.
