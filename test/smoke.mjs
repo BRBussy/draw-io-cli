@@ -118,6 +118,22 @@ try {
   run(["lint", join(dir, "straight.drawio"), "--strict"]);
   runExpectingFailure(["lint", join(dir, "diagonal.drawio")], "DIAGONAL");
 
+  // Same-colour edges properly crossing each other must fail lint; a T-junction must not.
+  const crossing = `<mxfile><diagram id="x" name="x"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="20" y="80" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="320" y="80" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="c" value="C" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="170" y="0" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="d" value="D" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="170" y="200" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="e1" style="html=1;strokeWidth=2;strokeColor=#E73F74;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2" style="html=1;strokeWidth=2;strokeColor=#E73F74;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="c" target="d"><mxGeometry relative="1" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "selfcross.drawio"), crossing);
+  runExpectingFailure(["lint", join(dir, "selfcross.drawio")], "same-colour");
+  // Different colours crossing is legal.
+  writeFileSync(join(dir, "crosscolour.drawio"), crossing.replace('strokeColor=#E73F74;exitX=0.5', 'strokeColor=#3969AC;exitX=0.5'));
+  run(["lint", join(dir, "crosscolour.drawio"), "--strict"]);
+
   console.log("smoke test passed");
 } finally {
   rmSync(dir, { recursive: true, force: true });

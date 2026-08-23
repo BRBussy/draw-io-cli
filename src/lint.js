@@ -104,7 +104,7 @@ export function lint(xml) {
     if (POISON_IDS.has(c.id)) errors.push(`cell id "${c.id}" collides with a webapp builtin and kills rendering`);
   }
 
-  const runs = []; // {edge, vertical, coord, lo, hi}
+  const runs = []; // {edge, vertical, coord, lo, hi, colour}
   for (const e of edges) {
     const s = e.attrs.source, t = e.attrs.target;
     if (!s || !t) { errors.push(`edge ${e.id}: unattached (missing ${!s ? "source" : "target"})`); continue; }
@@ -136,9 +136,10 @@ export function lint(xml) {
         errors.push(`edge ${e.id}: near-straight stutter of ${len} units at (${a.x},${a.y}), make it 0 or a deliberate jog`);
       }
       if (len >= MICRO) {
+        const colour = e.style.strokeColor ?? "default";
         runs.push(dx < 0.01
-          ? { edge: e.id, vertical: true, coord: a.x, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) }
-          : { edge: e.id, vertical: false, coord: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) });
+          ? { edge: e.id, vertical: true, coord: a.x, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y), colour }
+          : { edge: e.id, vertical: false, coord: a.y, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x), colour });
       }
       for (const shape of shapes) {
         if (shape.id === s || shape.id === t) continue;
@@ -147,6 +148,20 @@ export function lint(xml) {
           errors.push(`edge ${e.id}: segment cuts through shape ${shape.id} ("${(shape.attrs.value ?? "").slice(0, 30)}"), route around it`);
         }
       }
+    }
+  }
+
+  // Two edges of the same colour (the same step) must never properly cross each
+  // other. A T-junction, an endpoint landing ON the other run, is the sanctioned
+  // shared-trunk fan-out and is excluded by the strict-interior margins.
+  for (let i = 0; i < runs.length; i += 1) for (let j = 0; j < runs.length; j += 1) {
+    const v = runs[i], h = runs[j];
+    if (!v.vertical || h.vertical || v.edge === h.edge || v.colour !== h.colour) continue;
+    const M = 0.5;
+    if (v.coord > h.lo + M && v.coord < h.hi - M && h.coord > v.lo + M && h.coord < v.hi - M) {
+      errors.push(
+        `edges ${v.edge} and ${h.edge}: same-colour (${v.colour}) edges cross at (${v.coord},${h.coord}), share a base or reroute`,
+      );
     }
   }
 
