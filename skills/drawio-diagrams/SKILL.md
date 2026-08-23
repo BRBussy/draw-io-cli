@@ -52,7 +52,10 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
 - Do NOT embed draw.io SVG exports in READMEs: they carry theme-adaptive CSS (`light-dark(...)`)
   and render half-inverted in dark-mode GitHub and VS Code previews. PNG renders identically
   everywhere.
-- Default scale is 3. Drop it if the PNG is large and still legible.
+- Scale and border resolve as: explicit flag, then the nearest `drawio.config.json` searched
+  upward from the input file, then built-in defaults (scale 3, border 10). In a repository
+  that commits a `drawio.config.json`, render WITHOUT `--scale`/`--border` so the committed
+  settings apply, and change resolution by editing that file, not by passing flags.
 
 ## Verify after every render
 

@@ -41,8 +41,20 @@ node src/cli.js render diagram.drawio --svg
 ```
 
 Each flag takes an optional output path. Further options: `--page <name|index>` selects
-one page of a multi-page file, `--scale <n>` (default 3) and `--border <n>` (default 10)
-shape the export, `--force` overwrites existing outputs.
+one page of a multi-page file, `--scale <n>` and `--border <n>` shape the export,
+`--force` overwrites existing outputs.
+
+Scale and border resolve in precedence order: the explicit flag, then the nearest
+`drawio.config.json` searched upward from the input file, then the built-in defaults
+(scale 3, border 10). A repository commits render settings once as, for example:
+
+```json
+{ "render": { "scale": 3, "border": 10 } }
+```
+
+Scale is the resolution lever: pixel dimensions grow linearly with it and file size
+roughly with its square. Raise it when a diagram looks soft, lower it when files
+get heavy.
 
 ### doctor
 

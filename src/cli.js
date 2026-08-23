@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { extractMxfile } from "./extract.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
+import { loadRenderConfig } from "./config.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force]
@@ -56,8 +57,8 @@ async function runRender(args) {
   let png = null;
   let svg = null;
   let page = null;
-  let scale = 3;
-  let border = 10;
+  let scale = null;
+  let border = null;
   let force = false;
   const takesOptionalPath = (i) =>
     args[i + 1] !== undefined && !args[i + 1].startsWith("-") ? args[i + 1] : true;
@@ -86,6 +87,12 @@ async function runRender(args) {
   }
   if (input === null) fail(USAGE);
   if (png === null && svg === null) png = true;
+
+  // Precedence: explicit flag, then the nearest drawio.config.json, then built-in default.
+  const config = loadRenderConfig(input);
+  if (config.path !== null && (scale === null || border === null)) console.error(`config: ${config.path}`);
+  scale = scale ?? config.scale ?? 3;
+  border = border ?? config.border ?? 10;
 
   const raw = readFileSync(input);
   let xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");

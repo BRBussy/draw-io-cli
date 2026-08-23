@@ -70,6 +70,18 @@ try {
   assert.match(svg, /<svg\b[^>]*\scontent="/, "SVG root lacks the embedded content attribute");
   assert.ok(!svg.includes("img/lib/"), "SVG export references img/lib/ instead of inlined data URIs");
 
+  // drawio.config.json in the source's directory sets render defaults, flags override it.
+  writeFileSync(join(dir, "drawio.config.json"), JSON.stringify({ render: { scale: 1 } }));
+  run(["render", source, "--png", join(dir, "configured.drawio.png")]);
+  run(["render", source, "--png", join(dir, "flagged.drawio.png"), "--scale", "2"]);
+  const pngWidth = (buffer) => buffer.readUInt32BE(16);
+  const configured = pngWidth(readFileSync(join(dir, "configured.drawio.png")));
+  const flagged = pngWidth(readFileSync(join(dir, "flagged.drawio.png")));
+  assert.ok(
+    flagged > configured * 1.8,
+    `--scale 2 (${flagged}px) should dwarf config scale 1 (${configured}px)`,
+  );
+
   run(["extract", join(dir, "hello.drawio.png"), "-o", join(dir, "roundtrip.drawio")]);
   const roundtrip = readFileSync(join(dir, "roundtrip.drawio"), "utf8");
   assert.ok(roundtrip.includes('value="Hello"'), "round-tripped XML lost the Hello label");
