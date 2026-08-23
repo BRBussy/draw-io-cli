@@ -56,6 +56,20 @@ Scale is the resolution lever: pixel dimensions grow linearly with it and file s
 roughly with its square. Raise it when a diagram looks soft, lower it when files
 get heavy.
 
+### lint
+
+Statically verifies a diagram's routing from the XML alone: every edge attached, no
+diagonal segments, no near-straight stutters, no segment cutting through a shape, nearby
+parallel runs exactly aligned, edge `strokeWidth` at least 2, no webapp-poisonous cell ids.
+Verification requires edges to pin their connection points (`exitX`/`exitY`/`entryX`/`entryY`)
+and declare jogs as explicit waypoints: edges with floating connections are reported as
+warnings, since their rendered route is the router's guess. Errors exit 1, `--strict`
+makes warnings fail too.
+
+```
+node src/cli.js lint diagram.drawio
+```
+
 ### doctor
 
 Checks the render path: the extension webapp and the playwright Chromium build. Exits 0

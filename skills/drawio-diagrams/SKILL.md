@@ -71,6 +71,12 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
 
 ## Verify after every render
 
+0. `drawio-cli lint <file.drawio>` FIRST, before rendering: it statically catches unattached
+   edges, diagonal segments, near-straight stutters, segments cutting through shapes,
+   misaligned parallel runs, thin edges and poisonous cell ids. For it to verify routes,
+   author every edge with pinned connection points (`exitX`/`exitY`/`entryX`/`entryY` in the
+   style) and declare each jog as an explicit waypoint: never leave routing to the router.
+
 1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
    placeholders appear.
 2. `drawio-cli extract` the PNG and confirm the round-tripped XML still contains the labels you

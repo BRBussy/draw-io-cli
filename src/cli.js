@@ -4,10 +4,12 @@ import { extractMxfile } from "./extract.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
+import { lint } from "./lint.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force]
   drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>] [--force]
+  drawio-cli lint <input> [--strict]
   drawio-cli doctor`;
 
 function fail(message) {
@@ -126,9 +128,29 @@ async function runRender(args) {
   }
 }
 
+function runLint(args) {
+  let input = null;
+  let strict = false;
+  for (const arg of args) {
+    if (arg === "--strict") strict = true;
+    else if (input === null) input = arg;
+    else fail(`unexpected argument: ${arg}`);
+  }
+  if (input === null) fail(USAGE);
+  const raw = readFileSync(input);
+  const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
+  const { errors, warnings } = lint(xml);
+  for (const w of warnings) console.error(`warning: ${w}`);
+  for (const e of errors) console.error(`error: ${e}`);
+  const failing = errors.length + (strict ? warnings.length : 0);
+  console.log(`${errors.length} error(s), ${warnings.length} warning(s)`);
+  if (failing > 0) process.exit(1);
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "extract") runExtract(args);
+  else if (command === "lint") runLint(args);
   else if (command === "render") await runRender(args);
   else if (command === "doctor") process.exit(doctor());
   else fail(USAGE);

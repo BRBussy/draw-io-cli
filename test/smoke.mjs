@@ -106,6 +106,18 @@ try {
     "rejected the input silently",
   );
 
+  // lint: a pinned orthogonal edge passes, a pinned diagonal fails.
+  const lintable = (entryX) => `<mxfile><diagram id="l" name="l"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="240" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=${entryX};entryY=0;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "straight.drawio"), lintable("0.5"));
+  writeFileSync(join(dir, "diagonal.drawio"), lintable("0.9"));
+  run(["lint", join(dir, "straight.drawio"), "--strict"]);
+  runExpectingFailure(["lint", join(dir, "diagonal.drawio")], "DIAGONAL");
+
   console.log("smoke test passed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
