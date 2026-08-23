@@ -76,6 +76,9 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    misaligned parallel runs, thin edges and poisonous cell ids. For it to verify routes,
    author every edge with pinned connection points (`exitX`/`exitY`/`entryX`/`entryY` in the
    style) and declare each jog as an explicit waypoint: never leave routing to the router.
+   Fractional attachment points (exitX as a fraction of the shape's width) rarely land on
+   integer coordinates: use the exitDx/exitDy and entryDx/entryDy pixel offsets to pin a
+   run to an exact x or y.
 
 1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
    placeholders appear.
