@@ -17,6 +17,13 @@ the fix for anything missing (`npm install` + `npx playwright install chromium` 
 To see the render path working with your own eyes, run `npm test` in the checkout and Read the
 newest `test/smoke-*-test-result.drawio.png` it leaves behind (gitignored) as an image.
 
+## Hard constraint on helper scripts
+
+Every helper script in this workflow uses the Python or Node STANDARD LIBRARY plus tools
+already on the machine (`sips` for image downscaling and cropping). NEVER install a package
+into any global or user-level environment (`pip install`, `pip install --user`, `npm -g`):
+if stdlib plus system tools cannot do it, report that as friction instead of installing.
+
 ## Reading a diagram
 
 Never interpret a draw.io PNG from pixels. Files saved by the VS Code extension embed the full model:
