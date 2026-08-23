@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { extractMxfile } from "./extract.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
@@ -19,7 +19,10 @@ function writeOutput(path, data, force) {
   if (existsSync(path) && !force) {
     fail(`refusing to overwrite ${path} (use --force)`);
   }
-  writeFileSync(path, data);
+  // Write-then-rename, so an observer (editor, file watcher) never sees a torn file.
+  const temp = `${path}.tmp-${process.pid}`;
+  writeFileSync(temp, data);
+  renameSync(temp, path);
   console.log(path);
 }
 
@@ -103,6 +106,18 @@ async function runRender(args) {
   if (png !== null) formats.push("xmlpng");
   if (svg !== null) formats.push("xmlsvg");
   const results = await renderDiagram(xml, { formats, scale, border });
+  const cellCount = (text) => (String(text).match(/<mxCell[\s>]/g) ?? []).length;
+  const inputCells = cellCount(xml);
+  for (const format of formats) {
+    const exported = cellCount(extractMxfile(Buffer.from(results[format])));
+    if (exported < inputCells) {
+      fail(
+        `render loaded ${exported} of ${inputCells} cells (${format}): the webapp rejected the ` +
+          `input silently. Known causes: single-quoted XML attributes, or a cell id that ` +
+          `collides with a webapp builtin (e.g. id="map"). Fix the source, nothing was written.`,
+      );
+    }
+  }
   if (png !== null) {
     writeOutput(png === true ? `${base}.drawio.png` : png, results.xmlpng, force);
   }

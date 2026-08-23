@@ -40,6 +40,16 @@ function run(args) {
   return result;
 }
 
+function runExpectingFailure(args, stderrNeedle) {
+  const result = spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+  assert.notEqual(result.status, 0, `drawio-cli ${args.join(" ")} unexpectedly succeeded`);
+  assert.ok(
+    result.stderr.includes(stderrNeedle),
+    `stderr should mention "${stderrNeedle}", got:\n${result.stderr}`,
+  );
+  return result;
+}
+
 /** True when the PNG buffer carries a tEXt chunk keyed mxfile. */
 function hasMxfileChunk(png) {
   return png.includes(Buffer.concat([Buffer.from("tEXt"), Buffer.from("mxfile\0", "latin1")]));
@@ -86,6 +96,15 @@ try {
   const roundtrip = readFileSync(join(dir, "roundtrip.drawio"), "utf8");
   assert.ok(roundtrip.includes('value="Hello"'), "round-tripped XML lost the Hello label");
   assert.ok(roundtrip.includes('value="World"'), "round-tripped XML lost the World label");
+
+  // The webapp silently drops the whole model when a cell id collides with one of
+  // its builtins ("map" is a known case). The render guard must turn that into a
+  // loud failure instead of a blank PNG.
+  writeFileSync(join(dir, "landmine.drawio"), HELLO_DRAWIO.replace('id="2"', 'id="map"'));
+  runExpectingFailure(
+    ["render", join(dir, "landmine.drawio"), "--png", join(dir, "landmine.drawio.png")],
+    "rejected the input silently",
+  );
 
   console.log("smoke test passed");
 } finally {

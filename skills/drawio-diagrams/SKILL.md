@@ -38,6 +38,18 @@ judge visual layout.
 3. Keep labels plain text. HTML-markup labels export as foreignObject and degrade outside draw.io.
 4. To restyle consistently, copy style strings from existing cells in the same file rather than
    inventing new ones.
+5. XML landmines that make the webapp silently load ZERO cells (the render guard catches both
+   and names them, but avoid them up front):
+   - A cell id that collides with a webapp builtin. `id="map"` is confirmed poison. Use
+     hyphenated descriptive ids (`event-map`, `target-fn`) and never bare builtin-ish names
+     (`map`, `filter`, `target`, `constructor`).
+   - Single-quoted attribute values. Valid XML, rejected anyway. Always emit double-quoted
+     attributes and escape inner quotes as `&quot;` (beware `xml.sax.saxutils.quoteattr`,
+     which switches to single quotes when the value contains `"`).
+6. A `dashed=1` text shape renders as a borderless note, the intended look for behaviour notes.
+7. Round-trip comparisons (extracted PNG model vs source) are cell-level, never byte-level:
+   the webapp re-serialises, adding host/agent/version to mxfile and dropping zero-valued
+   coordinates. Compare cell ids and attributes, not bytes.
 
 ## Rendering
 
