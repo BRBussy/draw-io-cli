@@ -60,3 +60,15 @@ npm test
 ```
 
 Renders a small diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
+
+## Claude Code skill
+
+The repository carries a skill at `skills/drawio-diagrams` that teaches Claude Code to drive this
+CLI (extract, edit, render, verify) whenever a task touches draw.io files. To enable it globally
+while keeping it version controlled here, symlink it into your personal skills directory:
+
+```
+ln -sfn /Users/bernard/Projects/github.com/BRBussy/draw-io-cli/skills/drawio-diagrams ~/.claude/skills/drawio-diagrams
+```
+
+A `git pull` in this checkout then updates the skill everywhere, with nothing copied.

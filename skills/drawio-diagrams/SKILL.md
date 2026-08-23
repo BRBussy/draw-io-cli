@@ -1,0 +1,62 @@
+---
+name: drawio-diagrams
+description: >
+  Work with draw.io diagrams: read or interpret a .drawio, .drawio.png or
+  .drawio.svg file, extract the embedded model, edit diagram XML, render it
+  back to PNG/SVG, or create a new draw.io diagram. Use whenever a task
+  touches draw.io files (also written drawio or diagrams.net).
+---
+
+# draw.io diagrams via drawio-cli
+
+The CLI lives beside this skill in its checkout: `/Users/bernard/Projects/github.com/BRBussy/draw-io-cli`.
+Run it as `node /Users/bernard/Projects/github.com/BRBussy/draw-io-cli/src/cli.js <command>` (or plain
+`drawio-cli` if it is on PATH via `npm link`). Before first use in a session, `... doctor` verifies the
+render path (the hediet.vscode-drawio extension's bundled webapp plus playwright Chromium) and names
+the fix for anything missing (`npm install` + `npx playwright install chromium` in the checkout).
+
+## Reading a diagram
+
+Never interpret a draw.io PNG from pixels. Files saved by the VS Code extension embed the full model:
+
+```sh
+drawio-cli extract <file.drawio.png>     # or .drawio.svg; writes <file>.drawio XML
+```
+
+The XML gives every cell exactly: labels (`value`), containment (`parent` chains into swimlanes),
+geometry, styles, and every edge's `source`/`target`. Answer structural questions from the XML,
+and use a downscaled raster (`sips -Z 1600 in.png --out small.png`, then Read small.png) only to
+judge visual layout.
+
+## Editing or creating
+
+1. Edit the `.drawio` XML directly (or author fresh XML: `<mxfile><diagram><mxGraphModel>...`).
+2. Every edge MUST reference `source` and `target` cell ids. Free coordinate polylines break
+   silently on the next layout edit.
+3. Keep labels plain text. HTML-markup labels export as foreignObject and degrade outside draw.io.
+4. To restyle consistently, copy style strings from existing cells in the same file rather than
+   inventing new ones.
+
+## Rendering
+
+```sh
+drawio-cli render <file.drawio> --png            # default: also what READMEs should embed
+drawio-cli render <file.drawio> --png --svg      # svg only when explicitly needed
+drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
+```
+
+- The exported PNG embeds the model (a `tEXt` chunk keyed `mxfile`), so it stays editable in the
+  VS Code extension. Commit the `.drawio` source and the rendered `.drawio.png` together.
+- Do NOT embed draw.io SVG exports in READMEs: they carry theme-adaptive CSS (`light-dark(...)`)
+  and render half-inverted in dark-mode GitHub and VS Code previews. PNG renders identically
+  everywhere.
+- Default scale is 3. Drop it if the PNG is large and still legible.
+
+## Verify after every render
+
+1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
+   placeholders appear.
+2. `drawio-cli extract` the PNG and confirm the round-tripped XML still contains the labels you
+   changed (grep the exact strings).
+3. If the target repo defines diagram label conventions (in its AGENTS.md or a check script),
+   run its checks before finishing.
