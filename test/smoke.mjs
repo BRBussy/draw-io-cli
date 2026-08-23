@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const testDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(testDir);
 const cli = join(repoRoot, "src", "cli.js");
 
 const HELLO_DRAWIO = `<mxfile>
@@ -50,6 +51,16 @@ try {
   writeFileSync(source, HELLO_DRAWIO);
 
   run(["render", source, "--png", "--svg"]);
+
+  // Keep the rendered output visible: each run leaves its exports in test/ as
+  // gitignored artifacts, so a human or agent can open the hello world the
+  // assertions below checked with their own eyes.
+  const when = new Date().toISOString().replace(/[:T]/g, "-").replace(/\..*$/, "");
+  for (const ext of ["png", "svg"]) {
+    const artifact = join(testDir, `smoke-${when}-test-result.drawio.${ext}`);
+    copyFileSync(join(dir, `hello.drawio.${ext}`), artifact);
+    console.log(artifact);
+  }
 
   const png = readFileSync(join(dir, "hello.drawio.png"));
   assert.ok(png.length > 1000, "PNG export is implausibly small");

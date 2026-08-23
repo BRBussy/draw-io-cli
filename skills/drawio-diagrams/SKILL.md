@@ -14,6 +14,8 @@ Run it as `node /Users/bernard/Projects/github.com/BRBussy/draw-io-cli/src/cli.j
 `drawio-cli` if it is on PATH via `npm link`). Before first use in a session, `... doctor` verifies the
 render path (the hediet.vscode-drawio extension's bundled webapp plus playwright Chromium) and names
 the fix for anything missing (`npm install` + `npx playwright install chromium` in the checkout).
+To see the render path working with your own eyes, run `npm test` in the checkout and Read the
+newest `test/smoke-*-test-result.drawio.png` it leaves behind (gitignored) as an image.
 
 ## Reading a diagram
 
