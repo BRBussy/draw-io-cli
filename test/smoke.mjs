@@ -92,6 +92,10 @@ try {
     `--scale 2 (${flagged}px) should dwarf config scale 1 (${configured}px)`,
   );
 
+  // Render outputs are derived artifacts: re-rendering over an existing pair is the
+  // standard workflow and must succeed without any flag.
+  run(["render", source, "--png", join(dir, "configured.drawio.png")]);
+
   run(["extract", join(dir, "hello.drawio.png"), "-o", join(dir, "roundtrip.drawio")]);
   const roundtrip = readFileSync(join(dir, "roundtrip.drawio"), "utf8");
   assert.ok(roundtrip.includes('value="Hello"'), "round-tripped XML lost the Hello label");
@@ -117,6 +121,24 @@ try {
   writeFileSync(join(dir, "diagonal.drawio"), lintable("0.9"));
   run(["lint", join(dir, "straight.drawio"), "--strict"]);
   runExpectingFailure(["lint", join(dir, "diagonal.drawio")], "DIAGONAL");
+
+  // Two stacked parallel runs slightly out of column surface as an advisory note
+  // (never failing: the offset may be anchor-caused, which only an eyeball can tell).
+  const stacked = `<mxfile><diagram id="s" name="s"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="20" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="140" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="c" value="C" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="220" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="d" value="D" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="220" y="380" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="e1" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="160" /></Array></mxGeometry></mxCell>
+    <mxCell id="e2" style="html=1;strokeWidth=2;exitX=0.7;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="c" target="d"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="142" y="400" /></Array></mxGeometry></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "stacked.drawio"), stacked);
+  const stackedResult = run(["lint", join(dir, "stacked.drawio"), "--strict"]);
+  assert.ok(
+    stackedResult.stderr.includes("out of column"),
+    `stacked runs should surface an out-of-column note, got:\n${stackedResult.stderr}`,
+  );
 
   // Same-colour edges properly crossing each other must fail lint; a T-junction must not.
   const crossing = `<mxfile><diagram id="x" name="x"><mxGraphModel><root>

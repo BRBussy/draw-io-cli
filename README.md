@@ -41,8 +41,8 @@ node src/cli.js render diagram.drawio --svg
 ```
 
 Each flag takes an optional output path. Further options: `--page <name|index>` selects
-one page of a multi-page file, `--scale <n>` and `--border <n>` shape the export,
-`--force` overwrites existing outputs.
+one page of a multi-page file, `--scale <n>` and `--border <n>` shape the export.
+Render outputs are derived artifacts, so existing outputs are overwritten.
 
 Scale and border resolve in precedence order: the explicit flag, then the nearest
 `drawio.config.json` searched upward from the input file, then the built-in defaults

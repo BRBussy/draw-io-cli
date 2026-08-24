@@ -9,7 +9,7 @@ import { cellsReport, stylesReport } from "./cells.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force]
-  drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>] [--force]
+  drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>]
   drawio-cli lint <input> [--strict]
   drawio-cli cells <input>
   drawio-cli styles <input>
@@ -67,7 +67,6 @@ async function runRender(args) {
   let page = null;
   let scale = null;
   let border = null;
-  let force = false;
   const takesOptionalPath = (i) =>
     args[i + 1] !== undefined && !args[i + 1].startsWith("-") ? args[i + 1] : true;
   for (let i = 0; i < args.length; i += 1) {
@@ -89,8 +88,7 @@ async function runRender(args) {
       border = Number(args[i + 1] ?? fail("--border requires a number"));
       if (!Number.isFinite(border) || border < 0) fail("--border must be a non-negative number");
       i += 1;
-    } else if (arg === "--force") force = true;
-    else if (input === null) input = arg;
+    } else if (input === null) input = arg;
     else fail(`unexpected argument: ${arg}`);
   }
   if (input === null) fail(USAGE);
@@ -124,10 +122,10 @@ async function runRender(args) {
     }
   }
   if (png !== null) {
-    writeOutput(png === true ? `${base}.drawio.png` : png, results.xmlpng, force);
+    writeOutput(png === true ? `${base}.drawio.png` : png, results.xmlpng, true);
   }
   if (svg !== null) {
-    writeOutput(svg === true ? `${base}.drawio.svg` : svg, results.xmlsvg, force);
+    writeOutput(svg === true ? `${base}.drawio.svg` : svg, results.xmlsvg, true);
   }
 }
 

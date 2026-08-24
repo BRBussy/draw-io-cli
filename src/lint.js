@@ -9,7 +9,9 @@ const MICRO = 15; // units: a nonzero run shorter than this is a stutter, not a 
 const TAIL = 40; // units: minimum first/last segment on an edge that has a corner
 const CLEAR = 20; // units: minimum distance from an arrowhead to any other edge
 const CLEAR_SAME = 40; // units: minimum distance from an arrowhead to an unrelated edge of the SAME colour
-const NEAR = 15; // units: parallel runs closer than this must be exactly aligned
+const NEAR = 15; // units: overlapping parallel runs closer than this must be exactly aligned
+const STACK_OFFSET = 30; // units: stacked runs in one gutter closer than this read as one broken column
+const STACK_GAP = 120; // units: how far apart along their axis stacked runs still read as one column
 const POISON_IDS = new Set(["map", "filter", "target", "constructor", "proto", "__proto__"]);
 
 function attrs(chunk) {
@@ -197,20 +199,33 @@ export function lint(xml) {
     }
   }
 
+  const stackNotes = [];
   for (let i = 0; i < runs.length; i += 1) for (let j = i + 1; j < runs.length; j += 1) {
     const a = runs[i], b = runs[j];
     if (a.vertical !== b.vertical || a.edge === b.edge) continue;
     const gap = Math.abs(a.coord - b.coord);
-    if (gap > 0.01 && gap < NEAR && a.lo < b.hi && b.lo < a.hi) {
+    if (gap <= 0.01) continue;
+    const axis = a.vertical ? "vertical" : "horizontal";
+    if (gap < NEAR && a.lo < b.hi && b.lo < a.hi) {
       errors.push(
-        `edges ${a.edge} and ${b.edge}: parallel ${a.vertical ? "vertical" : "horizontal"} runs ${gap} units apart, align them exactly or separate them`,
+        `edges ${a.edge} and ${b.edge}: parallel ${axis} runs ${gap} units apart, align them exactly or separate them`,
+      );
+    }
+    // Stacked in one gutter: disjoint spans whose void is small read as one
+    // column, so a small cross-axis offset reads as a broken column. Advisory
+    // only: an offset forced by the anchor rules is legitimate, and only an
+    // eyeball can tell that apart from a broken column.
+    const voidBetween = Math.max(a.lo, b.lo) - Math.min(a.hi, b.hi);
+    if (gap < STACK_OFFSET && voidBetween > 0 && voidBetween < STACK_GAP) {
+      stackNotes.push(
+        `edges ${a.edge} and ${b.edge}: stacked ${axis} runs ${gap} units out of column, align them, separate them, or confirm the offset is anchor-caused`,
       );
     }
   }
 
   // Advisory only: a monospace code cell much wider than its text suggests the box
   // is not hugging its content. Char-count estimate, so these never fail a run.
-  const notes = [];
+  const notes = [...stackNotes];
   for (const c of cells.values()) {
     if (c.attrs.vertex !== "1" || !c.geo) continue;
     const value = c.attrs.value ?? "";
