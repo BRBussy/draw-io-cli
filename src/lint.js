@@ -7,7 +7,8 @@
 
 const MICRO = 15; // units: a nonzero run shorter than this is a stutter, not a jog
 const TAIL = 40; // units: minimum first/last segment on an edge that has a corner
-const CLEAR = 10; // units: minimum distance from an arrowhead to any other edge
+const CLEAR = 20; // units: minimum distance from an arrowhead to any other edge
+const CLEAR_SAME = 40; // units: minimum distance from an arrowhead to an unrelated edge of the SAME colour
 const NEAR = 15; // units: parallel runs closer than this must be exactly aligned
 const POISON_IDS = new Set(["map", "filter", "target", "constructor", "proto", "__proto__"]);
 
@@ -134,7 +135,7 @@ export function lint(xml) {
       if (first > 0.01 && first < TAIL) errors.push(`edge ${e.id}: tail of ${first} units before its first corner, minimum ${TAIL}`);
       if (last > 0.01 && last < TAIL) errors.push(`edge ${e.id}: lead of ${last} units into the arrowhead, minimum ${TAIL}`);
     }
-    entries.push({ edge: e.id, p: pts[pts.length - 1] });
+    entries.push({ edge: e.id, p: pts[pts.length - 1], colour: e.style.strokeColor ?? "default" });
     for (let i = 0; i + 1 < pts.length; i += 1) {
       const a = pts[i], b = pts[i + 1];
       const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
@@ -175,8 +176,10 @@ export function lint(xml) {
     const other = entries.find((o) => o.edge === r.edge);
     if (other && Math.abs(other.p.x - ent.p.x) < 2 && Math.abs(other.p.y - ent.p.y) < 2) continue;
     const d = distToRun(ent.p, r);
-    if (d < CLEAR) {
-      errors.push(`edge ${ent.edge}: arrowhead at (${ent.p.x},${ent.p.y}) is ${Math.round(d)} units from edge ${r.edge}, minimum ${CLEAR}`);
+    const floor = r.colour === ent.colour ? CLEAR_SAME : CLEAR;
+    if (d < floor) {
+      const same = r.colour === ent.colour ? " (SAME colour, reads as a junction)" : "";
+      errors.push(`edge ${ent.edge}: arrowhead at (${ent.p.x},${ent.p.y}) is ${Math.round(d)} units from edge ${r.edge}${same}, minimum ${floor}`);
     }
   }
 
@@ -205,5 +208,19 @@ export function lint(xml) {
     }
   }
 
-  return { errors, warnings };
+  // Advisory only: a monospace code cell much wider than its text suggests the box
+  // is not hugging its content. Char-count estimate, so these never fail a run.
+  const notes = [];
+  for (const c of cells.values()) {
+    if (c.attrs.vertex !== "1" || !c.geo) continue;
+    const value = c.attrs.value ?? "";
+    if (!/font-family:\s*Menlo/.test(value)) continue;
+    const text = value.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x");
+    const est = text.length * 7.3 + 8;
+    const width = Number(c.geo.width ?? 0);
+    if (width > est + 40) {
+      notes.push(`cell ${c.id}: box ${width}u wide for ~${Math.round(est)}u of text, likely not hugging its content`);
+    }
+  }
+  return { errors, warnings, notes };
 }

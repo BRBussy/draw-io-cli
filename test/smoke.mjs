@@ -144,6 +144,13 @@ try {
   writeFileSync(join(dir, "cramped.drawio"), cramped);
   runExpectingFailure(["lint", join(dir, "cramped.drawio")], "into the arrowhead");
 
+  // cells and styles reports render without dumping base64.
+  const cellsOut = run(["cells", source]).stdout;
+  assert.ok(cellsOut.includes("SHAPE") && cellsOut.includes("EDGE"), "cells report lacks shapes or edges");
+  assert.ok(!cellsOut.includes("iVBOR"), "cells report leaks base64");
+  const stylesOut = run(["styles", source]).stdout;
+  assert.ok(stylesOut.includes("rounded=0"), "styles report lacks style strings");
+
   console.log("smoke test passed");
 } finally {
   rmSync(dir, { recursive: true, force: true });

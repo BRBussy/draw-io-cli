@@ -26,6 +26,18 @@ if stdlib plus system tools cannot do it, report that as friction instead of ins
 
 ## Reading a diagram
 
+START with the built-in reports instead of scripting XML dumps:
+
+```sh
+drawio-cli cells <file.drawio>    # readable cell table: kinds, absolute geometry, labels, edge routes
+drawio-cli styles <palette.drawio> # named style catalogue from a palette file
+```
+
+They replace the exploratory parsing phase entirely: script your own XML analysis only for
+questions these two do not answer. When extracting a reference file from a directory you
+must not modify, ALWAYS pass `-o <scratchpad-path>`: the default writes next to the input.
+
+
 Never interpret a draw.io PNG from pixels. Files saved by the VS Code extension embed the full model:
 
 ```sh

@@ -70,6 +70,26 @@ makes warnings fail too.
 node src/cli.js lint diagram.drawio
 ```
 
+### cells
+
+Prints the diagram as a readable table: one line per cell with kind, absolute geometry,
+label and style summary, and for edges the endpoints, pinned anchors and waypoints.
+Embedded images are elided to their byte size. The fast way to read a diagram without
+scripting XML dumps.
+
+```
+node src/cli.js cells diagram.drawio
+```
+
+### styles
+
+Digests a palette file into a named style catalogue: each labelled cell's copyable style
+string, image payloads elided.
+
+```
+node src/cli.js styles diagram.drawio
+```
+
 ### doctor
 
 Checks the render path: the extension webapp and the playwright Chromium build. Exits 0

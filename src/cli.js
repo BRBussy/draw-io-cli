@@ -5,11 +5,14 @@ import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
 import { lint } from "./lint.js";
+import { cellsReport, stylesReport } from "./cells.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force]
   drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>] [--force]
   drawio-cli lint <input> [--strict]
+  drawio-cli cells <input>
+  drawio-cli styles <input>
   drawio-cli doctor`;
 
 function fail(message) {
@@ -139,7 +142,8 @@ function runLint(args) {
   if (input === null) fail(USAGE);
   const raw = readFileSync(input);
   const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
-  const { errors, warnings } = lint(xml);
+  const { errors, warnings, notes } = lint(xml);
+  for (const n of notes) console.error(`note: ${n}`);
   for (const w of warnings) console.error(`warning: ${w}`);
   for (const e of errors) console.error(`error: ${e}`);
   const failing = errors.length + (strict ? warnings.length : 0);
@@ -151,6 +155,12 @@ async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "extract") runExtract(args);
   else if (command === "lint") runLint(args);
+  else if (command === "cells" || command === "styles") {
+    const input = args[0] ?? fail(USAGE);
+    const raw = readFileSync(input);
+    const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
+    console.log(command === "cells" ? cellsReport(xml) : stylesReport(xml));
+  }
   else if (command === "render") await runRender(args);
   else if (command === "doctor") process.exit(doctor());
   else fail(USAGE);
