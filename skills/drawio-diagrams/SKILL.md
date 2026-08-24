@@ -34,7 +34,11 @@ drawio-cli styles <palette.drawio> # named style catalogue from a palette file
 ```
 
 They replace the exploratory parsing phase entirely: script your own XML analysis only for
-questions these two do not answer. When extracting a reference file from a directory you
+questions these two do not answer (typically exact style strings, which `cells` omits). When a
+.drawio is too large to read raw, the bulk is embedded icon payloads in `image=data:...` style
+attributes: dump the XML with those payloads elided to see everything else. The payload base64
+is URL-encoded inside the style attribute (`%2B` for `+`, `%3D` for `=`), so an eliding regex
+needs `%` in its character class, e.g. `image=data:image/png,[A-Za-z0-9%]+`. When extracting a reference file from a directory you
 must not modify, ALWAYS pass `-o <scratchpad-path>`: the default writes next to the input.
 
 
