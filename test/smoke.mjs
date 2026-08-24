@@ -134,6 +134,16 @@ try {
   writeFileSync(join(dir, "crosscolour.drawio"), crossing.replace('strokeColor=#E73F74;exitX=0.5', 'strokeColor=#3969AC;exitX=0.5'));
   run(["lint", join(dir, "crosscolour.drawio"), "--strict"]);
 
+  // A cramped lead into the arrowhead (corner 12 units before landing) must fail.
+  const cramped = `<mxfile><diagram id="t" name="t"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="20" y="20" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="220" y="150" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="50" y="170" /><mxPoint x="208" y="170" /></Array></mxGeometry></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "cramped.drawio"), cramped);
+  runExpectingFailure(["lint", join(dir, "cramped.drawio")], "into the arrowhead");
+
   console.log("smoke test passed");
 } finally {
   rmSync(dir, { recursive: true, force: true });

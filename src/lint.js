@@ -6,6 +6,8 @@
  */
 
 const MICRO = 15; // units: a nonzero run shorter than this is a stutter, not a jog
+const TAIL = 40; // units: minimum first/last segment on an edge that has a corner
+const CLEAR = 10; // units: minimum distance from an arrowhead to any other edge
 const NEAR = 15; // units: parallel runs closer than this must be exactly aligned
 const POISON_IDS = new Set(["map", "filter", "target", "constructor", "proto", "__proto__"]);
 
@@ -105,6 +107,7 @@ export function lint(xml) {
   }
 
   const runs = []; // {edge, vertical, coord, lo, hi, colour}
+  const entries = []; // {edge, p} arrowhead landing points
   for (const e of edges) {
     const s = e.attrs.source, t = e.attrs.target;
     if (!s || !t) { errors.push(`edge ${e.id}: unattached (missing ${!s ? "source" : "target"})`); continue; }
@@ -124,6 +127,14 @@ export function lint(xml) {
       ...e.points.map((p) => ({ x: p.x + eo.x, y: p.y + eo.y })),
       pinnedPoint(tb, e.style.entryX, e.style.entryY, e.style.entryDx, e.style.entryDy),
     ];
+    if (pts.length > 2) {
+      const seg = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+      const first = seg(pts[0], pts[1]);
+      const last = seg(pts[pts.length - 2], pts[pts.length - 1]);
+      if (first > 0.01 && first < TAIL) errors.push(`edge ${e.id}: tail of ${first} units before its first corner, minimum ${TAIL}`);
+      if (last > 0.01 && last < TAIL) errors.push(`edge ${e.id}: lead of ${last} units into the arrowhead, minimum ${TAIL}`);
+    }
+    entries.push({ edge: e.id, p: pts[pts.length - 1] });
     for (let i = 0; i + 1 < pts.length; i += 1) {
       const a = pts[i], b = pts[i + 1];
       const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
@@ -148,6 +159,24 @@ export function lint(xml) {
           errors.push(`edge ${e.id}: segment cuts through shape ${shape.id} ("${(shape.attrs.value ?? "").slice(0, 30)}"), route around it`);
         }
       }
+    }
+  }
+
+  // An arrowhead must land clear of every other edge. Arrowheads deliberately
+  // sharing one anchor point are the allowed confluence.
+  const distToRun = (p, r) => {
+    const along = r.vertical ? p.y : p.x;
+    const across = Math.abs((r.vertical ? p.x : p.y) - r.coord);
+    if (along >= r.lo && along <= r.hi) return across;
+    return across + Math.min(Math.abs(along - r.lo), Math.abs(along - r.hi));
+  };
+  for (const ent of entries) for (const r of runs) {
+    if (r.edge === ent.edge) continue;
+    const other = entries.find((o) => o.edge === r.edge);
+    if (other && Math.abs(other.p.x - ent.p.x) < 2 && Math.abs(other.p.y - ent.p.y) < 2) continue;
+    const d = distToRun(ent.p, r);
+    if (d < CLEAR) {
+      errors.push(`edge ${ent.edge}: arrowhead at (${ent.p.x},${ent.p.y}) is ${Math.round(d)} units from edge ${r.edge}, minimum ${CLEAR}`);
     }
   }
 
