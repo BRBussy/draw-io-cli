@@ -101,9 +101,10 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    because only an eyeball can judge them (an oversized code box, stacked runs slightly out
    of column). For each note either fix the geometry or confirm the layout is forced by an
    anchor rule (anchors always win); never just ignore the line.
-6. Line jumps (`jumpStyle=arc;jumpSize=10`) are z-order dependent: draw.io renders the hop
-   on the edge that crosses another declared EARLIER in the XML. Put the style on the
-   later-declared edge of the crossing pair, and verify the hop actually renders by eye:
+6. Line jumps (`jumpStyle=arc;jumpSize=10`): the edge carrying the style renders a hop
+   wherever it crosses another edge, on either side of it in declaration order. Choose
+   which edge of a crossing pair should visually break, put the style on that one, and
+   verify the hop actually renders by eye:
    no static check can see it. Z-order bites shapes the same way: a filled shape paints over
    any cell declared before it, so an icon embedded in a box must be declared AFTER the
    box or it renders invisible. Only the eyeball pass catches this.
