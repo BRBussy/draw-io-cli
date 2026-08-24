@@ -104,7 +104,9 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
 6. Line jumps (`jumpStyle=arc;jumpSize=10`) are z-order dependent: draw.io renders the hop
    on the edge that crosses another declared EARLIER in the XML. Put the style on the
    later-declared edge of the crossing pair, and verify the hop actually renders by eye:
-   no static check can see it.
+   no static check can see it. Z-order bites shapes the same way: a filled shape paints over
+   any cell declared before it, so an icon embedded in a box must be declared AFTER the
+   box or it renders invisible. Only the eyeball pass catches this.
 7. `sips --cropOffset` silently leaves the file uncropped when passed a 0 offset (and its
    placement is unreliable in general): never pass 0, and always assert the output
    dimensions after a crop before trusting what you Read.
