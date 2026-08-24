@@ -77,3 +77,28 @@ export function extractMxfile(buffer) {
   const embedded = isPng ? mxfileFromPng(buffer) : mxfileFromSvg(buffer.toString("utf8"));
   return uncompressMxfile(embedded);
 }
+
+/**
+ * Replaces embedded image payloads with size markers so the XML becomes
+ * readable. The result is for reading only: it no longer renders.
+ */
+export function elideImagePayloads(xml) {
+  return xml.replace(
+    /(image=data:image\/[a-zA-Z+.-]+[;,](?:base64,)?)[A-Za-z0-9+/=%]+/g,
+    (whole, head) => `${head}[elided ${Math.max(1, Math.round((whole.length - head.length) / 1024))}KB]`,
+  );
+}
+
+/**
+ * Decodes numeric character references (&#39; and friends) so byte-level
+ * greps match the source spelling. Structural characters (quote, ampersand,
+ * angle brackets) stay encoded, keeping the XML well-formed.
+ */
+export function decodeNumericEntities(xml) {
+  const structural = new Set([34, 38, 60, 62]);
+  return xml.replace(/&#(x?[0-9a-fA-F]+);/g, (whole, num) => {
+    const code = num[0] === "x" || num[0] === "X" ? parseInt(num.slice(1), 16) : parseInt(num, 10);
+    if (!Number.isFinite(code) || structural.has(code)) return whole;
+    return String.fromCodePoint(code);
+  });
+}

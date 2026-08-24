@@ -46,7 +46,9 @@ export function parseCells(xml) {
       const pa = attrs(p[1]);
       points.push({ x: Number(pa.x ?? 0), y: Number(pa.y ?? 0) });
     }
-    cells.set(a.id, { id: a.id, attrs: a, style: styleMap(a.style), geo, points });
+    const offM = body.match(/<mxPoint\b([^>]*)as="offset"[^>]*\/>/);
+    const offset = offM ? (() => { const oa = attrs(offM[1] + 'as="offset"'); return { x: Number(oa.x ?? 0), y: Number(oa.y ?? 0) }; })() : null;
+    cells.set(a.id, { id: a.id, attrs: a, style: styleMap(a.style), geo, points, offset });
   }
   return cells;
 }
@@ -110,6 +112,7 @@ export function lint(xml) {
   }
 
   const runs = []; // {edge, vertical, coord, lo, hi, colour}
+  const polylines = new Map(); // edge id -> pinned polyline points
   const entries = []; // {edge, p} arrowhead landing points
   for (const e of edges) {
     const s = e.attrs.source, t = e.attrs.target;
@@ -138,6 +141,7 @@ export function lint(xml) {
       if (last > 0.01 && last < TAIL) errors.push(`edge ${e.id}: lead of ${last} units into the arrowhead, minimum ${TAIL}`);
     }
     entries.push({ edge: e.id, p: pts[pts.length - 1], colour: e.style.strokeColor ?? "default" });
+    polylines.set(e.id, pts);
     for (let i = 0; i + 1 < pts.length; i += 1) {
       const a = pts[i], b = pts[i + 1];
       const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
@@ -235,6 +239,64 @@ export function lint(xml) {
     const width = Number(c.geo.width ?? 0);
     if (width > est + 40) {
       notes.push(`cell ${c.id}: box ${width}u wide for ~${Math.round(est)}u of text, likely not hugging its content`);
+    }
+  }
+  // Advisory only: edge labels have no committed geometry, so their boxes are
+  // estimated from character counts and the label's position along its edge.
+  // Estimates never fail a run; they point the eyeball at likely collisions.
+  const labelBoxes = [];
+  for (const c of cells.values()) {
+    if (c.attrs.vertex !== "1" || !c.geo) continue;
+    const parentEdge = cells.get(c.attrs.parent);
+    if (parentEdge?.attrs.edge !== "1") continue;
+    const pts = polylines.get(parentEdge.id);
+    if (!pts) continue;
+    const segs = [];
+    let arc = 0;
+    for (let i = 0; i + 1 < pts.length; i += 1) {
+      const len = Math.abs(pts[i].x - pts[i + 1].x) + Math.abs(pts[i].y - pts[i + 1].y);
+      segs.push({ a: pts[i], b: pts[i + 1], len, at: arc });
+      arc += len;
+    }
+    if (arc === 0) continue;
+    const t = Math.max(-1, Math.min(1, Number(c.geo.x ?? 0)));
+    const target = ((t + 1) / 2) * arc;
+    let anchor = pts[pts.length - 1];
+    for (const seg of segs) {
+      if (target <= seg.at + seg.len) {
+        const f = seg.len === 0 ? 0 : (target - seg.at) / seg.len;
+        anchor = { x: seg.a.x + (seg.b.x - seg.a.x) * f, y: seg.a.y + (seg.b.y - seg.a.y) * f };
+        break;
+      }
+    }
+    if (c.offset) anchor = { x: anchor.x + c.offset.x, y: anchor.y + c.offset.y };
+    const rawLines = (c.attrs.value ?? "")
+      .split(/&lt;br\s*\/?&gt;|<br\s*\/?>/i)
+      .map((l) => l.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x"));
+    const chars = Math.max(...rawLines.map((l) => l.length), 1);
+    const perChar = /font-family:\s*Menlo/.test(c.attrs.value ?? "") ? 7.3 : 6.5;
+    const w = chars * perChar + 4;
+    const h = rawLines.length * 16;
+    labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - w / 2, y: anchor.y - h / 2, w, h,
+      text: rawLines.join(" ").trim().slice(0, 30) });
+  }
+  const PEN = 2; // units a run must penetrate an estimated box before it is worth a note
+  for (const lb of labelBoxes) {
+    for (const r of runs) {
+      if (r.edge === lb.edge) continue;
+      const acrossLo = r.vertical ? lb.x : lb.y;
+      const acrossHi = r.vertical ? lb.x + lb.w : lb.y + lb.h;
+      const alongLo = r.vertical ? lb.y : lb.x;
+      const alongHi = r.vertical ? lb.y + lb.h : lb.x + lb.w;
+      if (r.coord > acrossLo + PEN && r.coord < acrossHi - PEN && r.lo < alongHi - PEN && r.hi > alongLo + PEN) {
+        notes.push(`edge ${r.edge} runs through the estimated box of label ${lb.id} ("${lb.text}"), likely striking the text`);
+      }
+    }
+  }
+  for (let i = 0; i < labelBoxes.length; i += 1) for (let j = i + 1; j < labelBoxes.length; j += 1) {
+    const a = labelBoxes[i], b = labelBoxes[j];
+    if (a.x + PEN < b.x + b.w && b.x + PEN < a.x + a.w && a.y + PEN < b.y + b.h && b.y + PEN < a.y + a.h) {
+      notes.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): estimated boxes overlap, likely colliding text`);
     }
   }
   return { errors, warnings, notes };

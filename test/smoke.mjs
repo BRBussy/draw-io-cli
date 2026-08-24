@@ -173,6 +173,62 @@ try {
   const stylesOut = run(["styles", source]).stdout;
   assert.ok(stylesOut.includes("rounded=0"), "styles report lacks style strings");
 
+  // extract --elide-images turns payloads into size markers (stdout by default,
+  // never onto the input path), --decode-entities makes apostrophes greppable.
+  const iconCell = '<mxCell id="ic" value="" style="shape=image;image=data:image/png,iVBORw0KGgoAAAANSUhEUg%2BAAAA;" vertex="1" parent="1"><mxGeometry x="500" y="40" width="20" height="20" as="geometry" /></mxCell>';
+  const withIcon = HELLO_DRAWIO.replace('value="Hello"', 'value="It&#39;s Hello"').replace("</root>", `${iconCell}</root>`);
+  const iconSource = join(dir, "icon.drawio");
+  writeFileSync(iconSource, withIcon);
+  const elided = run(["extract", iconSource, "--elide-images"]).stdout;
+  assert.ok(!elided.includes("iVBOR"), "elide left the base64 payload in place");
+  assert.ok(elided.includes("[elided"), "elide did not mark the removed payload");
+  assert.ok(elided.includes("&#39;"), "elide alone must not touch entities");
+  runExpectingFailure(
+    ["extract", iconSource, "--elide-images", "-o", iconSource],
+    "refusing to overwrite the input",
+  );
+  const decoded = run(["extract", iconSource, "--elide-images", "--decode-entities"]).stdout;
+  assert.ok(decoded.includes("It's Hello"), "decode-entities left &#39; encoded");
+  assert.ok(decoded.includes("&lt;") || !withIcon.includes("&lt;"), "structural entities must stay encoded");
+
+  // Edge-label collision notes: a riding label whose estimated box sits on
+  // another edge's run gets a note, and two stacked labels get a pair note.
+  const labelled = (labelY) => `<mxfile><diagram id="lb" name="lb"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="20" y="20" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="420" y="20" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="c" value="C" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="20" y="${labelY}" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="d" value="D" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="420" y="${labelY}" width="60" height="40" as="geometry" /></mxCell>
+    <mxCell id="e1" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="c" target="d"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2l" value="a fairly long riding label" style="edgeLabel;html=1;" vertex="1" connectable="0" parent="e2"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="0" y="OFFSET" as="offset" /></mxGeometry></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  // Label pushed up from its own edge (y=labelY+20) onto e1's run at y=40.
+  const collideY = 70; // e2 run at y=90, offset -50 puts the label box across y=40
+  writeFileSync(join(dir, "labelhit.drawio"), labelled(collideY).replace('y="OFFSET"', 'y="-50"'));
+  const hit = run(["lint", join(dir, "labelhit.drawio"), "--strict"]);
+  assert.ok(hit.stderr.includes("estimated box of label"), `expected a label-strike note, got:\n${hit.stderr}`);
+  // The same label left in place on its own edge produces no label note.
+  writeFileSync(join(dir, "labelclean.drawio"), labelled(300).replace('y="OFFSET"', 'y="0"'));
+  const clean = run(["lint", join(dir, "labelclean.drawio"), "--strict"]);
+  assert.ok(!clean.stderr.includes("estimated box"), `clean label wrongly flagged:\n${clean.stderr}`);
+
+  // measure: a rendered box with known text reports its pixel-true padding.
+  const measurable = `<mxfile><diagram id="m" name="m"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="frame" value="" style="rounded=0;html=1;fillColor=none;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="400" height="200" as="geometry" /></mxCell>
+    <mxCell id="padded" value="MEASURED" style="rounded=0;whiteSpace=wrap;html=1;align=left;spacingLeft=20;" vertex="1" parent="1"><mxGeometry x="100" y="60" width="200" height="60" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const msource = join(dir, "measured.drawio");
+  writeFileSync(msource, measurable);
+  run(["render", msource, "--png", "--scale", "3", "--border", "10"]);
+  const mOut = run(["measure", join(dir, "measured.drawio.png"), "--cell", "padded", "--scale", "3", "--border", "10"]).stdout;
+  assert.match(mOut, /calibration: scale=3 border=10/, "measure lacks the calibration line");
+  const padMatch = mOut.match(/padding L=([\d.]+)/);
+  assert.ok(padMatch, `measure lacks a padding readout:\n${mOut}`);
+  const left = Number(padMatch[1]);
+  assert.ok(left > 12 && left < 28, `spacingLeft=20 should measure ~20u of left padding, got ${left}`);
+
   console.log("smoke test passed");
 } finally {
   rmSync(dir, { recursive: true, force: true });

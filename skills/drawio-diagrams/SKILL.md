@@ -24,6 +24,13 @@ already on the machine (`sips` for image downscaling and cropping). NEVER instal
 into any global or user-level environment (`pip install`, `pip install --user`, `npm -g`):
 if stdlib plus system tools cannot do it, report that as friction instead of installing.
 
+A second hard constraint: file content moves FILE-TO-FILE, never through your own output.
+Diagram files carry embedded base64 icon payloads that overflow output-token limits when
+retyped: an agent has died mid-task doing exactly that. Copy with `cp`, capture with shell
+redirection, and transform with scripts that read the source file and write the destination
+file, printing only short confirmations (counts, asserts). Never paste file regions into
+heredocs, Edit/Write calls, or your own messages.
+
 ## Reading a diagram
 
 START with the built-in reports instead of scripting XML dumps:
@@ -35,10 +42,15 @@ drawio-cli styles <palette.drawio> # named style catalogue from a palette file
 
 They replace the exploratory parsing phase entirely: script your own XML analysis only for
 questions these two do not answer (typically exact style strings, which `cells` omits). When a
-.drawio is too large to read raw, the bulk is embedded icon payloads in `image=data:...` style
-attributes: dump the XML with those payloads elided to see everything else. The payload base64
-is URL-encoded inside the style attribute (`%2B` for `+`, `%3D` for `=`), so an eliding regex
-needs `%` in its character class, e.g. `image=data:image/png,[A-Za-z0-9%]+`. When extracting a reference file from a directory you
+.drawio is too large to read raw, the bulk is embedded icon payloads:
+
+```sh
+drawio-cli extract <file> --elide-images            # full model XML to stdout, payloads as [elided NKB]
+drawio-cli extract <file> --elide-images -o dump.xml
+```
+
+It accepts .drawio, .drawio.png and .drawio.svg inputs alike. The elided model no longer
+renders, so it never lands on the input path. When extracting a reference file from a directory you
 must not modify, ALWAYS pass `-o <scratchpad-path>`: the default writes next to the input.
 
 
@@ -71,6 +83,8 @@ judge visual layout.
      which switches to single quotes when the value contains `"`).
 6. A `dashed=1` text shape renders as a borderless note, the intended look for behaviour notes.
 7. Round-trip comparisons (extracted PNG model vs source) are cell-level, never byte-level:
+   `extract --decode-entities` restores apostrophes and friends (&#39;) to their source
+   spelling so greps against the extracted model match, keeping structural entities encoded.
    the webapp re-serialises, adding host/agent/version to mxfile and dropping zero-valued
    coordinates. Compare cell ids and attributes, not bytes.
 
@@ -116,6 +130,9 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    placement is unreliable in general): never pass 0, and always assert the output
    dimensions after a crop before trusting what you Read.
 
+0b. For padding and box-hug questions, measure the rendered pixels instead of squinting:
+   `drawio-cli measure <file.drawio.png> --cell <id>` reports each cell's ink extents and
+   per-side padding in model units, with a calibration line carrying its own error bar.
 1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
    placeholders appear.
 2. `drawio-cli extract` the PNG and confirm the round-tripped XML still contains the labels you

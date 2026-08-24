@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
-import { extractMxfile } from "./extract.js";
+import { extractMxfile, uncompressMxfile, elideImagePayloads, decodeNumericEntities } from "./extract.js";
+import { measure } from "./measure.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
@@ -8,11 +9,12 @@ import { lint } from "./lint.js";
 import { cellsReport, stylesReport } from "./cells.js";
 
 const USAGE = `Usage:
-  drawio-cli extract <input> [-o <output>] [--force]
+  drawio-cli extract <input> [-o <output>] [--force] [--elide-images] [--decode-entities]
   drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>]
   drawio-cli lint <input> [--strict]
   drawio-cli cells <input>
   drawio-cli styles <input>
+  drawio-cli measure <input.drawio.png> --cell <id> [--cell <id> ...] [--scale <n>] [--border <n>]
   drawio-cli doctor`;
 
 function fail(message) {
@@ -37,22 +39,75 @@ function defaultExtractOutput(input) {
   return stripped.endsWith(".drawio") ? stripped : `${stripped}.drawio`;
 }
 
+/** Reads any .drawio/.drawio.png/.drawio.svg into uncompressed mxfile XML. */
+function readModel(input) {
+  const raw = readFileSync(input);
+  const text = raw.toString("utf8");
+  return text.includes("<mxfile") && !(raw[0] === 0x89 && raw[1] === 0x50)
+    ? uncompressMxfile(text)
+    : extractMxfile(raw);
+}
+
 function runExtract(args) {
   let input = null;
   let output = null;
   let force = false;
+  let elide = false;
+  let decode = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "-o") {
       output = args[i + 1] ?? fail("-o requires a path");
       i += 1;
     } else if (arg === "--force") force = true;
+    else if (arg === "--elide-images") elide = true;
+    else if (arg === "--decode-entities") decode = true;
     else if (input === null) input = arg;
     else fail(`unexpected argument: ${arg}`);
   }
   if (input === null) fail(USAGE);
-  const xml = extractMxfile(readFileSync(input));
-  writeOutput(output ?? defaultExtractOutput(input), xml, force);
+  let xml = readModel(input);
+  if (elide) xml = elideImagePayloads(xml);
+  if (decode) xml = decodeNumericEntities(xml);
+  if (elide && output === null) {
+    // An elided model no longer renders, so it never lands on the default
+    // path where it could shadow (or overwrite) the real file.
+    console.log(xml);
+    return;
+  }
+  const target = output ?? defaultExtractOutput(input);
+  if (elide && target === input) fail("refusing to overwrite the input with an elided (non-rendering) model");
+  writeOutput(target, xml, force);
+}
+
+function runMeasure(args) {
+  let input = null;
+  let scale = null;
+  let border = null;
+  const cellIds = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--cell") {
+      cellIds.push(args[i + 1] ?? fail("--cell requires a cell id"));
+      i += 1;
+    } else if (arg === "--scale") {
+      scale = Number(args[i + 1] ?? fail("--scale requires a number"));
+      i += 1;
+    } else if (arg === "--border") {
+      border = Number(args[i + 1] ?? fail("--border requires a number"));
+      i += 1;
+    } else if (input === null) input = arg;
+    else fail(`unexpected argument: ${arg}`);
+  }
+  if (input === null) fail(USAGE);
+  if (cellIds.length === 0) fail("measure needs at least one --cell <id>");
+  const config = loadRenderConfig(input);
+  if (config.path !== null && (scale === null || border === null)) console.error(`config: ${config.path}`);
+  scale = scale ?? config.scale ?? 3;
+  border = border ?? config.border ?? 10;
+  const raw = readFileSync(input);
+  const xml = extractMxfile(raw);
+  console.log(measure(raw, xml, { cellIds, scale, border }));
 }
 
 /** Strips render input suffixes down to the base name shared by all outputs. */
@@ -160,6 +215,7 @@ async function main() {
     console.log(command === "cells" ? cellsReport(xml) : stylesReport(xml));
   }
   else if (command === "render") await runRender(args);
+  else if (command === "measure") runMeasure(args);
   else if (command === "doctor") process.exit(doctor());
   else fail(USAGE);
 }
