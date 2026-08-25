@@ -101,6 +101,16 @@ try {
   assert.ok(roundtrip.includes('value="Hello"'), "round-tripped XML lost the Hello label");
   assert.ok(roundtrip.includes('value="World"'), "round-tripped XML lost the World label");
 
+  // extract's default target is the sibling .drawio, which for a rendered pair
+  // is the source of truth: an existing file there must refuse without --force
+  // and stay byte-identical.
+  runExpectingFailure(["extract", join(dir, "hello.drawio.png")], "refusing to overwrite");
+  assert.equal(
+    readFileSync(source, "utf8"),
+    HELLO_DRAWIO,
+    "refused extract must leave the existing .drawio untouched",
+  );
+
   // The webapp silently drops the whole model when a cell id collides with one of
   // its builtins ("map" is a known case). The render guard must turn that into a
   // loud failure instead of a blank PNG.

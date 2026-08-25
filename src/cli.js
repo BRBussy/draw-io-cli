@@ -22,10 +22,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function writeOutput(path, data, force) {
-  if (existsSync(path) && !force) {
-    fail(`refusing to overwrite ${path} (use --force)`);
-  }
+function writeOutput(path, data) {
   // Write-then-rename, so an observer (editor, file watcher) never sees a torn file.
   const temp = `${path}.tmp-${process.pid}`;
   writeFileSync(temp, data);
@@ -77,7 +74,15 @@ function runExtract(args) {
   }
   const target = output ?? defaultExtractOutput(input);
   if (elide && target === input) fail("refusing to overwrite the input with an elided (non-rendering) model");
-  writeOutput(target, xml, force);
+  // The default target is the sibling .drawio, which for a rendered pair is
+  // the source of truth, and extracted XML is the webapp's re-serialisation
+  // of the model, not that file's original bytes.
+  if (existsSync(target) && !force) {
+    fail(
+      `refusing to overwrite ${target}: extracted XML is a re-serialisation, not the file's original bytes. Write elsewhere with -o <path>, or overwrite with --force.`,
+    );
+  }
+  writeOutput(target, xml);
 }
 
 function runMeasure(args) {

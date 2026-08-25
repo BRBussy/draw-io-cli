@@ -27,8 +27,10 @@ Pulls the embedded draw.io model out of a `.drawio.png` (PNG `tEXt` chunk) or
 node src/cli.js extract diagram.drawio.png
 ```
 
-Writes `diagram.drawio` next to the input. Use `-o <path>` to choose the output and
-`--force` to overwrite an existing file.
+Writes `diagram.drawio` next to the input, refusing when that file already exists:
+extracted XML is the webapp's re-serialisation of the model, not the original bytes,
+so landing it on a pair's source is destructive. Use `-o <path>` to choose the
+output, or `--force` to overwrite deliberately.
 
 ### render
 
