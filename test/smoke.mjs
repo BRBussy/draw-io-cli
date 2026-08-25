@@ -21,8 +21,13 @@ const HELLO_DRAWIO = `<mxfile>
         <mxCell id="3" value="World" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
           <mxGeometry x="240" y="40" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="4" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" parent="1" source="2" target="3">
+        <mxCell id="4" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="2" target="3">
           <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4l" value="hop label" style="edgeLabel;html=1;align=center;verticalAlign=middle;labelBackgroundColor=none;fontSize=12;fontColor=#333333;spacing=2;" vertex="1" connectable="0" parent="4">
+          <mxGeometry x="0" relative="1" as="geometry">
+            <mxPoint x="12" y="-8" as="offset" />
+          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
@@ -111,6 +116,24 @@ try {
     "refused extract must leave the existing .drawio untouched",
   );
 
+  // render always overwrites its derived outputs: --force is a misconception
+  // the error must correct rather than silently accept.
+  runExpectingFailure(["render", source, "--png", "--force"], "render always overwrites");
+
+  // cells: an edge label row carries its owning edge, relative position and
+  // offset point; styles truncate at 90 chars unless --full.
+  const labelCells = run(["cells", source]).stdout;
+  assert.ok(labelCells.includes("ELBL  4l  on=4 pos=0 offset=(12,-8)"), "cells must report the edge label's position and offset");
+  assert.ok(!labelCells.includes("spacing=2;"), "cells without --full must truncate the long style");
+  const labelCellsFull = run(["cells", source, "--full"]).stdout;
+  assert.ok(labelCellsFull.includes("spacing=2;"), "cells --full must print the untruncated style");
+
+  // measure: an edge label resolves its anchor on the parent edge's pinned
+  // polyline and reports ink inside its estimated box.
+  const labelMeasure = run(["measure", join(dir, "hello.drawio.png"), "--cell", "4l"]).stdout;
+  assert.match(labelMeasure, /label 4l on edge 4: .*anchor \(212,62\)/, "measure must anchor the edge label on its polyline");
+  assert.match(labelMeasure, /ink \d/, "measure must find the label's text ink");
+
   // The webapp silently drops the whole model when a cell id collides with one of
   // its builtins ("map" is a known case). The render guard must turn that into a
   // loud failure instead of a blank PNG.
@@ -175,6 +198,28 @@ try {
   </root></mxGraphModel></diagram></mxfile>`;
   writeFileSync(join(dir, "cramped.drawio"), cramped);
   runExpectingFailure(["lint", join(dir, "cramped.drawio")], "into the arrowhead");
+
+  // A backgroundless label crossed by its own edge's vertical run is a
+  // touching knockout gap: advisory note. A background colour silences it.
+  const ownEdgeLabel = (labelStyle) => `<mxfile><diagram id="o" name="o"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="240" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="own edge label" style="${labelStyle}" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "ownlabel.drawio"), ownEdgeLabel("edgeLabel;html=1;"));
+  const ownLabelResult = run(["lint", join(dir, "ownlabel.drawio"), "--strict"]);
+  assert.ok(
+    ownLabelResult.stderr.includes("touching knockout gap"),
+    `backgroundless own-edge label should surface a note, got:\n${ownLabelResult.stderr}`,
+  );
+  writeFileSync(join(dir, "ownlabel-bg.drawio"), ownEdgeLabel("edgeLabel;html=1;labelBackgroundColor=#FFFFFF;"));
+  const ownLabelBg = run(["lint", join(dir, "ownlabel-bg.drawio"), "--strict"]);
+  assert.ok(
+    !ownLabelBg.stderr.includes("touching knockout gap"),
+    `a label with a background must not be flagged, got:\n${ownLabelBg.stderr}`,
+  );
 
   // cells and styles reports render without dumping base64.
   const cellsOut = run(["cells", source]).stdout;

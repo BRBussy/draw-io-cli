@@ -78,6 +78,69 @@ function pinnedPoint(box, fx, fy, dx, dy) {
   return { x: box.x + Number(fx) * box.w + Number(dx ?? 0), y: box.y + Number(fy) * box.h + Number(dy ?? 0) };
 }
 
+/**
+ * Resolves an edge's pinned polyline in absolute model coordinates.
+ * Returns {pts} on success, or the reason it cannot be resolved:
+ * {missing: "source"|"target"}, {nogeo: true}, or {unpinned: true}.
+ */
+export function pinnedPolyline(cells, e) {
+  const s = e.attrs.source, t = e.attrs.target;
+  if (!s || !t) return { missing: !s ? "source" : "target" };
+  const sb = bbox(cells, s), tb = bbox(cells, t);
+  if (!sb || !tb) return { nogeo: true };
+  if (e.style.exitX === undefined || e.style.exitY === undefined ||
+      e.style.entryX === undefined || e.style.entryY === undefined) return { unpinned: true };
+  const eo = absOrigin(cells, e.attrs.parent);
+  return {
+    pts: [
+      pinnedPoint(sb, e.style.exitX, e.style.exitY, e.style.exitDx, e.style.exitDy),
+      ...e.points.map((p) => ({ x: p.x + eo.x, y: p.y + eo.y })),
+      pinnedPoint(tb, e.style.entryX, e.style.entryY, e.style.entryDx, e.style.entryDy),
+    ],
+  };
+}
+
+/**
+ * Resolves an edge label's absolute anchor point: the label's relative
+ * position (geometry x in -1..1) walked along the polyline's arc length,
+ * plus its offset point. Returns null when the polyline has no length.
+ */
+export function labelAnchor(pts, t, offset) {
+  const segs = [];
+  let arc = 0;
+  for (let i = 0; i + 1 < pts.length; i += 1) {
+    const len = Math.abs(pts[i].x - pts[i + 1].x) + Math.abs(pts[i].y - pts[i + 1].y);
+    segs.push({ a: pts[i], b: pts[i + 1], len, at: arc });
+    arc += len;
+  }
+  if (arc === 0) return null;
+  const clamped = Math.max(-1, Math.min(1, Number(t ?? 0)));
+  const target = ((clamped + 1) / 2) * arc;
+  let anchor = pts[pts.length - 1];
+  for (const seg of segs) {
+    if (target <= seg.at + seg.len) {
+      const f = seg.len === 0 ? 0 : (target - seg.at) / seg.len;
+      anchor = { x: seg.a.x + (seg.b.x - seg.a.x) * f, y: seg.a.y + (seg.b.y - seg.a.y) * f };
+      break;
+    }
+  }
+  return offset ? { x: anchor.x + offset.x, y: anchor.y + offset.y } : anchor;
+}
+
+/**
+ * Estimates a label's rendered box from its character counts: width from the
+ * longest line's advance, height from the line count. An estimate, never
+ * exact: callers must treat it as advisory.
+ */
+export function estimateLabelBox(value) {
+  const rawLines = (value ?? "")
+    .split(/&lt;br\s*\/?&gt;|<br\s*\/?>/i)
+    .map((l) => l.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x"));
+  const chars = Math.max(...rawLines.map((l) => l.length), 1);
+  const perChar = /font-family:\s*Menlo/.test(value ?? "") ? 7.3 : 6.5;
+  return { w: chars * perChar + 4, h: rawLines.length * 16, text: rawLines.join(" ").trim().slice(0, 30) };
+}
+
 function segmentCrossesBox(a, b, box) {
   const pad = 4; // hexagons and rounded shapes are narrower than their bbox
   const x1 = box.x + pad, y1 = box.y + pad, x2 = box.x + box.w - pad, y2 = box.y + box.h - pad;
@@ -116,23 +179,16 @@ export function lint(xml) {
   const entries = []; // {edge, p} arrowhead landing points
   for (const e of edges) {
     const s = e.attrs.source, t = e.attrs.target;
-    if (!s || !t) { errors.push(`edge ${e.id}: unattached (missing ${!s ? "source" : "target"})`); continue; }
+    const res = pinnedPolyline(cells, e);
+    if (res.missing) { errors.push(`edge ${e.id}: unattached (missing ${res.missing})`); continue; }
     const sw = Number(e.style.strokeWidth ?? 1);
     if (sw < 2) warnings.push(`edge ${e.id}: strokeWidth=${sw}, edges must be thicker than lane borders (>=2)`);
-    const sb = bbox(cells, s), tb = bbox(cells, t);
-    if (!sb || !tb) { warnings.push(`edge ${e.id}: terminal without geometry, cannot verify route`); continue; }
-    const pinnedExit = e.style.exitX !== undefined && e.style.exitY !== undefined;
-    const pinnedEntry = e.style.entryX !== undefined && e.style.entryY !== undefined;
-    if (!pinnedExit || !pinnedEntry) {
+    if (res.nogeo) { warnings.push(`edge ${e.id}: terminal without geometry, cannot verify route`); continue; }
+    if (res.unpinned) {
       warnings.push(`edge ${e.id}: floating connection (pin exitX/exitY and entryX/entryY to make the route verifiable)`);
       continue;
     }
-    const eo = absOrigin(cells, e.attrs.parent);
-    const pts = [
-      pinnedPoint(sb, e.style.exitX, e.style.exitY, e.style.exitDx, e.style.exitDy),
-      ...e.points.map((p) => ({ x: p.x + eo.x, y: p.y + eo.y })),
-      pinnedPoint(tb, e.style.entryX, e.style.entryY, e.style.entryDx, e.style.entryDy),
-    ];
+    const pts = res.pts;
     if (pts.length > 2) {
       const seg = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
       const first = seg(pts[0], pts[1]);
@@ -251,34 +307,12 @@ export function lint(xml) {
     if (parentEdge?.attrs.edge !== "1") continue;
     const pts = polylines.get(parentEdge.id);
     if (!pts) continue;
-    const segs = [];
-    let arc = 0;
-    for (let i = 0; i + 1 < pts.length; i += 1) {
-      const len = Math.abs(pts[i].x - pts[i + 1].x) + Math.abs(pts[i].y - pts[i + 1].y);
-      segs.push({ a: pts[i], b: pts[i + 1], len, at: arc });
-      arc += len;
-    }
-    if (arc === 0) continue;
-    const t = Math.max(-1, Math.min(1, Number(c.geo.x ?? 0)));
-    const target = ((t + 1) / 2) * arc;
-    let anchor = pts[pts.length - 1];
-    for (const seg of segs) {
-      if (target <= seg.at + seg.len) {
-        const f = seg.len === 0 ? 0 : (target - seg.at) / seg.len;
-        anchor = { x: seg.a.x + (seg.b.x - seg.a.x) * f, y: seg.a.y + (seg.b.y - seg.a.y) * f };
-        break;
-      }
-    }
-    if (c.offset) anchor = { x: anchor.x + c.offset.x, y: anchor.y + c.offset.y };
-    const rawLines = (c.attrs.value ?? "")
-      .split(/&lt;br\s*\/?&gt;|<br\s*\/?>/i)
-      .map((l) => l.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x"));
-    const chars = Math.max(...rawLines.map((l) => l.length), 1);
-    const perChar = /font-family:\s*Menlo/.test(c.attrs.value ?? "") ? 7.3 : 6.5;
-    const w = chars * perChar + 4;
-    const h = rawLines.length * 16;
-    labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - w / 2, y: anchor.y - h / 2, w, h,
-      text: rawLines.join(" ").trim().slice(0, 30) });
+    const anchor = labelAnchor(pts, c.geo.x, c.offset);
+    if (!anchor) continue;
+    const est = estimateLabelBox(c.attrs.value);
+    const bg = c.style.labelBackgroundColor ?? parentEdge.style.labelBackgroundColor;
+    labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - est.w / 2, y: anchor.y - est.h / 2,
+      w: est.w, h: est.h, text: est.text, noBg: bg === undefined || bg === "none" });
   }
   const PEN = 2; // units a run must penetrate an estimated box before it is worth a note
   for (const lb of labelBoxes) {
@@ -297,6 +331,23 @@ export function lint(xml) {
     const a = labelBoxes[i], b = labelBoxes[j];
     if (a.x + PEN < b.x + b.w && b.x + PEN < a.x + a.w && a.y + PEN < b.y + b.h && b.y + PEN < a.y + a.h) {
       notes.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): estimated boxes overlap, likely colliding text`);
+    }
+  }
+  // Advisory only: a backgroundless label whose own edge crosses it on a
+  // VERTICAL run has the line abutting its text above and below. The webapp
+  // knocks the line out behind the text, but on a perpendicular crossing the
+  // knockout gap is a tight touch the eyeball keeps flagging. A label riding
+  // along its own horizontal run gets a wide lateral knockout and is fine,
+  // so horizontal runs are excluded on purpose.
+  const PEN_OWN = 8; // units: box estimates overshoot text, so a graze at the margin is not a crossing
+  for (const lb of labelBoxes) {
+    if (!lb.noBg) continue;
+    for (const r of runs) {
+      if (r.edge !== lb.edge || !r.vertical) continue;
+      if (r.coord > lb.x + PEN_OWN && r.coord < lb.x + lb.w - PEN_OWN && r.lo < lb.y + lb.h - PEN && r.hi > lb.y + PEN) {
+        notes.push(`label ${lb.id} ("${lb.text}"): its own edge ${lb.edge}'s vertical run crosses the text with no background colour, a touching knockout gap. Slide it clear (offset point) or set labelBackgroundColor`);
+        break;
+      }
     }
   }
   return { errors, warnings, notes };

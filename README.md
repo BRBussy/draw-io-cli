@@ -68,6 +68,12 @@ and declare jogs as explicit waypoints: edges with floating connections are repo
 warnings, since their rendered route is the router's guess. Errors exit 1, `--strict`
 makes warnings fail too.
 
+Advisory `note:` lines never fail a run: estimated label boxes crossed by another edge's
+run, overlapping label boxes, stacked runs out of column, code boxes not hugging their
+text, and a backgroundless edge label whose own edge crosses it on a vertical run (the
+webapp knocks the line out behind the text, but a perpendicular crossing leaves a
+touching gap: slide the label clear with an offset point or set `labelBackgroundColor`).
+
 ```
 node src/cli.js lint diagram.drawio
 ```
@@ -75,12 +81,31 @@ node src/cli.js lint diagram.drawio
 ### cells
 
 Prints the diagram as a readable table: one line per cell with kind, absolute geometry,
-label and style summary, and for edges the endpoints, pinned anchors and waypoints.
-Embedded images are elided to their byte size. The fast way to read a diagram without
-scripting XML dumps.
+label and style summary, and for edges the endpoints, pinned anchors and waypoints. An
+edge label's line (`ELBL`) shows its owning edge, relative position and offset point
+instead of a meaningless absolute origin. Embedded images are elided to their byte size.
+The fast way to read a diagram without scripting XML dumps. `--full` prints untruncated
+style strings (image payloads stay elided), so exact styles never need a raw XML grep.
 
 ```
-node src/cli.js cells diagram.drawio
+node src/cli.js cells diagram.drawio --full
+```
+
+### measure
+
+Measures cells of a rendered `.drawio.png` against its embedded model: pixel ink extents
+and per-side padding in model units, calibrated from the model bounds plus the render
+config (the report opens with the calibration residual as its error bar, and a large
+residual names its suspects: estimated edge-label boxes hanging past the model bounds,
+or failing that the cells that set each bound). A container or group cell reports each
+vertex child too, so box-hug questions are answerable directly. An edge label resolves
+its anchor from the parent edge's pinned polyline and measures ink inside its estimated
+box: the box is a character-count estimate, and the ink includes anything else inside it,
+the edge's own stroke included, which is exactly what makes a line touching its label
+visible in numbers.
+
+```
+node src/cli.js measure diagram.drawio.png --cell some-node --cell some-edge-label
 ```
 
 ### styles

@@ -1,5 +1,5 @@
 import { decodePng } from "./png.js";
-import { parseCells } from "./lint.js";
+import { parseCells, pinnedPolyline, labelAnchor, estimateLabelBox } from "./lint.js";
 
 function absOrigin(cells, id) {
   let x = 0, y = 0, cur = cells.get(id);
@@ -20,25 +20,31 @@ function bbox(cells, c) {
   };
 }
 
-/** Model-space bounds over every vertex box and edge waypoint. */
+/**
+ * Model-space bounds over every vertex box and edge waypoint, remembering
+ * which cell sets each extreme so a calibration mismatch can name suspects.
+ */
 function modelBounds(cells) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const setBy = { minX: null, minY: null, maxX: null, maxY: null };
+  const take = (id, x1, y1, x2, y2) => {
+    if (x1 < minX) { minX = x1; setBy.minX = id; }
+    if (y1 < minY) { minY = y1; setBy.minY = id; }
+    if (x2 > maxX) { maxX = x2; setBy.maxX = id; }
+    if (y2 > maxY) { maxY = y2; setBy.maxY = id; }
+  };
   for (const c of cells.values()) {
     if (c.attrs.vertex === "1" && c.geo && !(cells.get(c.attrs.parent)?.attrs.edge === "1")) {
       const b = bbox(cells, c);
-      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
-      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+      take(c.id, b.x, b.y, b.x + b.w, b.y + b.h);
     }
     if (c.attrs.edge === "1") {
       const eo = absOrigin(cells, c.attrs.parent);
-      for (const p of c.points) {
-        minX = Math.min(minX, p.x + eo.x); minY = Math.min(minY, p.y + eo.y);
-        maxX = Math.max(maxX, p.x + eo.x); maxY = Math.max(maxY, p.y + eo.y);
-      }
+      for (const p of c.points) take(c.id, p.x + eo.x, p.y + eo.y, p.x + eo.x, p.y + eo.y);
     }
   }
   if (!Number.isFinite(minX)) throw new Error("no geometry found to calibrate against");
-  return { minX, minY, maxX, maxY };
+  return { minX, minY, maxX, maxY, setBy };
 }
 
 const INK = ([r, g, b, a]) => a > 16 && (r < 245 || g < 245 || b < 245);
@@ -63,26 +69,47 @@ export function measure(pngBuffer, xml, { cellIds, scale, border }) {
       `png=${img.width}x${img.height} predicted=${predictedW}x${predictedH} residual=${residualW},${residualH}px`,
   );
   if (Math.abs(residualW) > 2 * scale || Math.abs(residualH) > 2 * scale) {
+    // Edge labels have no committed geometry, so they never count toward the
+    // model bounds, and a label hanging past the outermost shape is the usual
+    // cause of a large residual. Estimate each label's box and name the
+    // overhangers.
+    const overhangs = [];
+    for (const c of cells.values()) {
+      if (c.attrs.vertex !== "1" || !c.geo) continue;
+      const parentEdge = cells.get(c.attrs.parent);
+      if (parentEdge?.attrs.edge !== "1") continue;
+      const res = pinnedPolyline(cells, parentEdge);
+      if (!res.pts) continue;
+      const anchor = labelAnchor(res.pts, c.geo.x, c.offset);
+      if (!anchor) continue;
+      const est = estimateLabelBox(c.attrs.value);
+      const over = Math.max(
+        b.minX - (anchor.x - est.w / 2), (anchor.x + est.w / 2) - b.maxX,
+        b.minY - (anchor.y - est.h / 2), (anchor.y + est.h / 2) - b.maxY,
+      );
+      if (over > 2) overhangs.push(`${c.id} (~${Math.round(over)}u past the bounds)`);
+    }
+    const suspects = overhangs.length > 0
+      ? `Estimated edge-label overhangs: ${overhangs.join(", ")}`
+      : `Bounds are set by left=${b.setBy.minX} top=${b.setBy.minY} right=${b.setBy.maxX} ` +
+        `bottom=${b.setBy.maxY}: check those cells for overhanging strokes or labels`;
     lines.push(
       `calibration: WARNING residual exceeds ${2 * scale}px, strokes or labels extend past ` +
-        `the geometry bounds; per-cell numbers below may be off by up to residual/scale units`,
+        `the geometry bounds; per-cell numbers below may be off by up to residual/scale units. ` +
+        suspects,
     );
   }
   const toPx = (mx, my) => ({
     x: Math.round((mx - b.minX + border) * scale) + Math.trunc(residualW / 2),
     y: Math.round((my - b.minY + border) * scale) + Math.trunc(residualH / 2),
   });
-  for (const id of cellIds) {
-    const c = cells.get(id);
-    if (!c || c.attrs.vertex !== "1" || !c.geo) {
-      lines.push(`cell ${id}: not a vertex with geometry`);
-      continue;
-    }
-    const box = bbox(cells, c);
+  const u = (px) => Math.round((px / scale) * 10) / 10;
+  // Scans ink inside a model-space box, inset by insetU units per side so a
+  // border stroke never counts as ink. Returns null when no ink is found.
+  const inkIn = (box, insetU) => {
     const tl = toPx(box.x, box.y);
     const br = toPx(box.x + box.w, box.y + box.h);
-    // Inset past the border stroke so the box's own outline never counts as ink.
-    const inset = Math.ceil(2 * scale);
+    const inset = Math.ceil(insetU * scale);
     let inkL = Infinity, inkT = Infinity, inkR = -Infinity, inkB = -Infinity;
     for (let y = Math.max(0, tl.y + inset); y < Math.min(img.height, br.y - inset); y += 1) {
       for (let x = Math.max(0, tl.x + inset); x < Math.min(img.width, br.x - inset); x += 1) {
@@ -92,16 +119,66 @@ export function measure(pngBuffer, xml, { cellIds, scale, border }) {
         }
       }
     }
-    if (!Number.isFinite(inkL)) {
-      lines.push(`cell ${id}: box ${box.w}x${box.h}u at (${box.x},${box.y}), no ink found inside (past the ${Math.round(inset / scale)}u border inset)`);
+    if (!Number.isFinite(inkL)) return null;
+    return {
+      w: u(inkR - inkL + 1), h: u(inkB - inkT + 1),
+      padL: u(inkL - tl.x), padT: u(inkT - tl.y), padR: u(br.x - 1 - inkR), padB: u(br.y - 1 - inkB),
+    };
+  };
+  const boxLine = (prefix, box, insetU) => {
+    const ink = inkIn(box, insetU);
+    if (!ink) {
+      return `${prefix}: box ${box.w}x${box.h}u at (${box.x},${box.y}), no ink found inside (past the ${insetU}u border inset)`;
+    }
+    return `${prefix}: box ${box.w}x${box.h}u at (${box.x},${box.y}), ink ${ink.w}x${ink.h}u, ` +
+      `padding L=${ink.padL} T=${ink.padT} R=${ink.padR} B=${ink.padB}u ` +
+      `(ink beyond the ${insetU}u border inset)`;
+  };
+  for (const id of cellIds) {
+    const c = cells.get(id);
+    if (!c || c.attrs.vertex !== "1" || !c.geo) {
+      lines.push(`cell ${id}: not a vertex with geometry`);
       continue;
     }
-    const u = (px) => Math.round((px / scale) * 10) / 10;
-    lines.push(
-      `cell ${id}: box ${box.w}x${box.h}u at (${box.x},${box.y}), ink ${u(inkR - inkL + 1)}x${u(inkB - inkT + 1)}u, ` +
-        `padding L=${u(inkL - tl.x)} T=${u(inkT - tl.y)} R=${u(br.x - 1 - inkR)} B=${u(br.y - 1 - inkB)}u ` +
-        `(ink beyond the ${Math.round(inset / scale)}u border inset)`,
+    const parentEdge = cells.get(c.attrs.parent);
+    if (parentEdge?.attrs.edge === "1") {
+      // An edge label's geometry is relative: resolve its anchor from the
+      // parent edge's pinned polyline, then measure ink in its estimated box.
+      const res = pinnedPolyline(cells, parentEdge);
+      if (!res.pts) {
+        lines.push(`cell ${id}: label of edge ${parentEdge.id}, which has no pinned polyline to anchor on`);
+        continue;
+      }
+      const anchor = labelAnchor(res.pts, c.geo.x, c.offset);
+      if (!anchor) {
+        lines.push(`cell ${id}: label of edge ${parentEdge.id}, whose polyline has no length`);
+        continue;
+      }
+      const est = estimateLabelBox(c.attrs.value);
+      const box = {
+        x: Math.round((anchor.x - est.w / 2 - 4) * 10) / 10,
+        y: Math.round((anchor.y - est.h / 2 - 4) * 10) / 10,
+        w: Math.round((est.w + 8) * 10) / 10,
+        h: Math.round((est.h + 8) * 10) / 10,
+      };
+      const off = c.offset ? ` offset (${c.offset.x},${c.offset.y})` : " no offset";
+      lines.push(
+        boxLine(`label ${id} on edge ${parentEdge.id}`, box, 0) +
+          ` [anchor (${Math.round(anchor.x)},${Math.round(anchor.y)}) pos=${c.geo.x ?? 0}${off}; ` +
+          `box is the char-count estimate, and ink includes anything else inside it, the edge's own stroke included]`,
+      );
+      continue;
+    }
+    const box = bbox(cells, c);
+    lines.push(boxLine(`cell ${id}`, box, 2));
+    // A container or group: measure each vertex child too, so box-hug
+    // questions (is the text padded inside its box) are answerable directly.
+    const children = [...cells.values()].filter(
+      (k) => k.attrs.parent === id && k.attrs.vertex === "1" && k.geo,
     );
+    for (const child of children) {
+      lines.push("  " + boxLine(`child ${child.id}`, bbox(cells, child), 2));
+    }
   }
   return lines.join("\n");
 }

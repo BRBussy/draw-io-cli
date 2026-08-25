@@ -12,7 +12,7 @@ const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force] [--elide-images] [--decode-entities]
   drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>]
   drawio-cli lint <input> [--strict]
-  drawio-cli cells <input>
+  drawio-cli cells <input> [--full]
   drawio-cli styles <input>
   drawio-cli measure <input.drawio.png> --cell <id> [--cell <id> ...] [--scale <n>] [--border <n>]
   drawio-cli doctor`;
@@ -148,6 +148,8 @@ async function runRender(args) {
       border = Number(args[i + 1] ?? fail("--border requires a number"));
       if (!Number.isFinite(border) || border < 0) fail("--border must be a non-negative number");
       i += 1;
+    } else if (arg === "--force") {
+      fail("render always overwrites its derived outputs, no flag needed: drop --force");
     } else if (input === null) input = arg;
     else fail(`unexpected argument: ${arg}`);
   }
@@ -214,10 +216,11 @@ async function main() {
   if (command === "extract") runExtract(args);
   else if (command === "lint") runLint(args);
   else if (command === "cells" || command === "styles") {
-    const input = args[0] ?? fail(USAGE);
+    const full = args.includes("--full");
+    const input = args.filter((a) => a !== "--full")[0] ?? fail(USAGE);
     const raw = readFileSync(input);
     const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
-    console.log(command === "cells" ? cellsReport(xml) : stylesReport(xml));
+    console.log(command === "cells" ? cellsReport(xml, { full }) : stylesReport(xml));
   }
   else if (command === "render") await runRender(args);
   else if (command === "measure") runMeasure(args);

@@ -36,12 +36,14 @@ heredocs, Edit/Write calls, or your own messages.
 START with the built-in reports instead of scripting XML dumps:
 
 ```sh
-drawio-cli cells <file.drawio>    # readable cell table: kinds, absolute geometry, labels, edge routes
-drawio-cli styles <palette.drawio> # named style catalogue from a palette file
+drawio-cli cells <file.drawio>          # readable cell table: kinds, absolute geometry, labels, edge routes
+drawio-cli cells <file.drawio> --full   # same, with untruncated style strings (exact styles, no XML grep)
+drawio-cli styles <palette.drawio>      # named style catalogue from a palette file
 ```
 
 They replace the exploratory parsing phase entirely: script your own XML analysis only for
-questions these two do not answer (typically exact style strings, which `cells` omits). When a
+questions these do not answer. Edge-label rows (`ELBL`) show the owning edge, the label's
+relative position and its offset point: an edge label has no absolute geometry of its own. When a
 .drawio is too large to read raw, the bulk is embedded icon payloads:
 
 ```sh
@@ -132,7 +134,12 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
 
 0b. For padding and box-hug questions, measure the rendered pixels instead of squinting:
    `drawio-cli measure <file.drawio.png> --cell <id>` reports each cell's ink extents and
-   per-side padding in model units, with a calibration line carrying its own error bar.
+   per-side padding in model units, with a calibration line carrying its own error bar
+   (a large residual names its suspects: edge labels overhanging the model bounds, or
+   the cells that set each bound). Passing a container or group id reports every vertex
+   child too. Passing an edge label's id resolves its anchor on the edge's polyline and
+   measures ink inside its estimated box: ink there includes the edge's own stroke, so
+   zero top or bottom padding on a riding label means the line is touching its text.
 1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
    placeholders appear.
 2. `drawio-cli extract` the PNG and confirm the round-tripped XML still contains the labels you

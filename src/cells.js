@@ -19,11 +19,22 @@ function label(value) {
 /**
  * Renders the diagram model as a readable table: one line per cell with its
  * kind, absolute geometry, label, and for edges the endpoints, pinned
- * anchors and waypoints. Embedded images are elided to their byte size.
+ * anchors and waypoints. An edge label's line carries its relative position
+ * and offset point instead of a meaningless absolute origin. Embedded images
+ * are elided to their byte size, and styles are truncated unless `full` is
+ * set.
+ *
+ * @param xml - Uncompressed mxfile XML.
+ * @param full - When true, print untruncated style strings (image payloads
+ *   stay elided).
  */
-export function cellsReport(xml) {
+export function cellsReport(xml, { full = false } = {}) {
   const cells = parseCells(xml);
   const lines = [];
+  const styleOf = (st) => {
+    const elided = st.replace(/image=data:[^;]+/, (m) => `image=[${Math.round(m.length / 1024)}KB]`);
+    return full ? elided : elided.slice(0, 90);
+  };
   for (const c of cells.values()) {
     if (c.id === "0" || c.id === "1" || !c.attrs.id) continue;
     const st = c.attrs.style ?? "";
@@ -32,13 +43,18 @@ export function cellsReport(xml) {
         .filter((k) => c.style[k] !== undefined).map((k) => `${k}=${c.style[k]}`).join(",");
       const wp = c.points.map((p) => `(${p.x},${p.y})`).join(" ");
       const colour = c.style.strokeColor ?? "default";
-      lines.push(`EDGE  ${c.id}  ${c.attrs.source ?? "?"} -> ${c.attrs.target ?? "?"}  colour=${colour}  ${anchors}${wp ? "  wp: " + wp : ""}`);
+      lines.push(`EDGE  ${c.id}  ${c.attrs.source ?? "?"} -> ${c.attrs.target ?? "?"}  colour=${colour}  ${anchors}${wp ? "  wp: " + wp : ""}${full && st ? "  " + styleOf(st) : ""}`);
     } else if (c.attrs.vertex === "1" && c.geo) {
+      const parentEdge = cells.get(c.attrs.parent);
+      if (parentEdge?.attrs.edge === "1") {
+        const off = c.offset ? `(${c.offset.x},${c.offset.y})` : "none";
+        lines.push(`ELBL  ${c.id}  on=${parentEdge.id} pos=${c.geo.x ?? 0} offset=${off}  "${label(c.attrs.value)}"  ${styleOf(st)}`);
+        continue;
+      }
       const o = absOrigin(cells, c.attrs.parent);
       const x = o.x + Number(c.geo.x ?? 0), y = o.y + Number(c.geo.y ?? 0);
       const kind = st.includes("swimlane") ? "LANE " : st.includes("image=data:") ? "ICON " : st.includes("image") ? "ICON " : st.includes("edgeLabel") ? "ELBL " : "SHAPE";
-      const styleShort = st.replace(/image=data:[^;]+/, (m) => `image=[${Math.round(m.length / 1024)}KB]`).slice(0, 90);
-      lines.push(`${kind} ${c.id}  @(${x},${y}) ${c.geo.width ?? "?"}x${c.geo.height ?? "?"}  parent=${c.attrs.parent}  "${label(c.attrs.value)}"  ${styleShort}`);
+      lines.push(`${kind} ${c.id}  @(${x},${y}) ${c.geo.width ?? "?"}x${c.geo.height ?? "?"}  parent=${c.attrs.parent}  "${label(c.attrs.value)}"  ${styleOf(st)}`);
     }
   }
   return lines.join("\n");
