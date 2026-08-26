@@ -12,7 +12,15 @@ const CLEAR_SAME = 40; // units: minimum distance from an arrowhead to an unrela
 const NEAR = 15; // units: overlapping parallel runs closer than this must be exactly aligned
 const STACK_OFFSET = 30; // units: stacked runs in one gutter closer than this read as one broken column
 const STACK_GAP = 120; // units: how far apart along their axis stacked runs still read as one column
+const CENTRE_TOL_H = 4; // units: a horizontal run this far off a label's vertical midpoint still reads as riding it
+const CENTRE_TOL_FRAC = 0.15; // a label's width is a character estimate (~10% out), so the vertical-run tolerance scales with it
+const CENTRE_TOL_V = 8; // units: floor under the scaled tolerance, so a short label still gets one
+const ALONGSIDE = 60; // units: clear of the box by more than this and the label has drifted off its run
 const POISON_IDS = new Set(["map", "filter", "target", "constructor", "proto", "__proto__"]);
+// The whole label text is one call expression: an identifier immediately followed
+// by a parenthesised argument list. Such a label is code, not a description, so
+// the "bold actor prefix, capitalised body" format does not apply to it.
+const CODE_LABEL = /^[A-Za-z_$][\w$.]*\([^()]*\)$/;
 
 function attrs(chunk) {
   const out = {};
@@ -127,18 +135,104 @@ export function labelAnchor(pts, t, offset) {
   return offset ? { x: anchor.x + offset.x, y: anchor.y + offset.y } : anchor;
 }
 
+const NAMED_ENTITIES = { lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", amp: "&" };
+
+/**
+ * Decodes a cell value's XML entities to a fixpoint. A value round-tripped
+ * through the webapp's editor is often doubly encoded (`&amp;lt;b&amp;gt;`),
+ * so a single pass leaves markup still spelled as text.
+ */
+export function decodeEntities(value) {
+  let text = value ?? "";
+  for (let pass = 0; pass < 8; pass += 1) {
+    const next = text
+      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+      .replace(/&(lt|gt|quot|apos|nbsp|amp);/g, (_, n) => NAMED_ENTITIES[n]);
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+/**
+ * Splits a cell value's markup into its rendered lines, entities decoded to a
+ * fixpoint. Each line carries its full text and the part of it inside a bold
+ * span, so a `<b>` spanning a `<br>` (which the editor writes freely) still
+ * reports the first line as fully bold. Empty lines are dropped.
+ */
+export function renderedLines(value) {
+  const html = decodeEntities(value);
+  const lines = [{ text: "", bold: "" }];
+  let bold = 0;
+  const put = (s) => {
+    const cur = lines[lines.length - 1];
+    cur.text += s;
+    if (bold > 0) cur.bold += s;
+  };
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) { put(html.slice(i)); break; }
+    put(html.slice(i, lt));
+    const gt = html.indexOf(">", lt);
+    if (gt === -1) { put(html.slice(lt)); break; }
+    const raw = html.slice(lt + 1, gt);
+    const name = raw.replace(/^\//, "").split(/[\s/]/)[0].toLowerCase();
+    if (name === "br" || name === "div" || name === "p") lines.push({ text: "", bold: "" });
+    else if (name === "b" || name === "strong") bold = Math.max(0, bold + (raw.startsWith("/") ? -1 : 1));
+    i = gt + 1;
+  }
+  return lines
+    .map((l) => ({ text: l.text.trim(), bold: l.bold.trim() }))
+    .filter((l) => l.text !== "");
+}
+
 /**
  * Estimates a label's rendered box from its character counts: width from the
  * longest line's advance, height from the line count. An estimate, never
  * exact: callers must treat it as advisory.
  */
 export function estimateLabelBox(value) {
-  const rawLines = (value ?? "")
-    .split(/&lt;br\s*\/?&gt;|<br\s*\/?>/i)
-    .map((l) => l.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x"));
-  const chars = Math.max(...rawLines.map((l) => l.length), 1);
-  const perChar = /font-family:\s*Menlo/.test(value ?? "") ? 7.3 : 6.5;
-  return { w: chars * perChar + 4, h: rawLines.length * 16, text: rawLines.join(" ").trim().slice(0, 30) };
+  const lines = renderedLines(value);
+  const chars = Math.max(...lines.map((l) => l.text.length), 1);
+  const perChar = /font-family:\s*Menlo/.test(decodeEntities(value)) ? 7.3 : 6.5;
+  return {
+    w: chars * perChar + 4,
+    h: Math.max(lines.length, 1) * 16,
+    text: lines.map((l) => l.text).join(" ").slice(0, 30),
+  };
+}
+
+/**
+ * Finds editor-injected inline CSS in a cell value, returning one token per
+ * distinct offence (empty when the value is clean). The webapp writes theme
+ * and scrollbar declarations into a value the moment it is edited in place,
+ * and they survive into the committed file as styling nobody chose.
+ *
+ * The palette's code-cell scaffold is the ONE sanctioned inline CSS: a Menlo
+ * `font-family` declaration plus the plain single-colour spans nested in it,
+ * which is how every contract-member row carries its keyword colour. A colour
+ * span in a value carrying no such scaffold is the editor's, not the palette's,
+ * and `scrollbar-color` or `light-dark(` is the editor's anywhere at all.
+ */
+export function editorJunk(value) {
+  const html = decodeEntities(value ?? "");
+  const found = [];
+  for (const token of ["scrollbar-color", "light-dark("]) if (html.includes(token)) found.push(token);
+  const scaffolded = /font-family:\s*Menlo/.test(html);
+  for (const attr of html.matchAll(/style="([^"]*)"/g)) {
+    for (const decl of attr[1].split(";")) {
+      const colon = decl.indexOf(":");
+      if (colon === -1) continue;
+      const prop = decl.slice(0, colon).trim().toLowerCase();
+      const val = decl.slice(colon + 1).trim();
+      if (prop !== "color" && prop !== "background-color") continue;
+      // A literal colour inside the code scaffold is the palette's member-row span.
+      if (scaffolded && prop === "color" && /^(rgb\([\d,\s]+\)|#[0-9a-fA-F]{3,8})$/.test(val)) continue;
+      found.push(`${prop}: ${val}`);
+    }
+  }
+  return [...new Set(found)];
 }
 
 function segmentCrossesBox(a, b, box) {
@@ -301,18 +395,19 @@ export function lint(xml) {
   // estimated from character counts and the label's position along its edge.
   // Estimates never fail a run; they point the eyeball at likely collisions.
   const labelBoxes = [];
+  const labelCells = [];
   for (const c of cells.values()) {
     if (c.attrs.vertex !== "1" || !c.geo) continue;
     const parentEdge = cells.get(c.attrs.parent);
     if (parentEdge?.attrs.edge !== "1") continue;
+    labelCells.push({ cell: c, edge: parentEdge.id });
     const pts = polylines.get(parentEdge.id);
     if (!pts) continue;
     const anchor = labelAnchor(pts, c.geo.x, c.offset);
     if (!anchor) continue;
     const est = estimateLabelBox(c.attrs.value);
-    const bg = c.style.labelBackgroundColor ?? parentEdge.style.labelBackgroundColor;
     labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - est.w / 2, y: anchor.y - est.h / 2,
-      w: est.w, h: est.h, text: est.text, noBg: bg === undefined || bg === "none" });
+      w: est.w, h: est.h, text: est.text, align: c.style.align });
   }
   const PEN = 2; // units a run must penetrate an estimated box before it is worth a note
   for (const lb of labelBoxes) {
@@ -333,22 +428,91 @@ export function lint(xml) {
       notes.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): estimated boxes overlap, likely colliding text`);
     }
   }
-  // Advisory only: a backgroundless label whose own edge crosses it on a
-  // VERTICAL run has the line abutting its text above and below. The webapp
-  // knocks the line out behind the text, but on a perpendicular crossing the
-  // knockout gap is a tight touch the eyeball keeps flagging. A label riding
-  // along its own horizontal run gets a wide lateral knockout and is fine,
-  // so horizontal runs are excluded on purpose.
-  const PEN_OWN = 8; // units: box estimates overshoot text, so a graze at the margin is not a crossing
+  // Golden rule, advisory: a riding label either straddles its own edge's
+  // nearest run through its centre band (the knockout breaking the line behind
+  // the text) or sits clear alongside, the run on its LEFT (vertical) or its
+  // top or bottom (horizontal). A vertical run on the label's RIGHT is always a
+  // strike. The centre band's tolerance is absolute across a horizontal run
+  // (line height is 16 units, known exactly) and proportional across a vertical
+  // one (the box width is a character estimate, roughly 10% out).
+  //
+  // The same nearest run fixes the alignment rule: `align=left` when the run
+  // crosses the label horizontally, `align=center` when the run is vertical or
+  // the label sits alongside. A missing token is the webapp default, center.
+  let seated = 0;
   for (const lb of labelBoxes) {
-    if (!lb.noBg) continue;
-    for (const r of runs) {
-      if (r.edge !== lb.edge || !r.vertical) continue;
-      if (r.coord > lb.x + PEN_OWN && r.coord < lb.x + lb.w - PEN_OWN && r.lo < lb.y + lb.h - PEN && r.hi > lb.y + PEN) {
-        notes.push(`label ${lb.id} ("${lb.text}"): its own edge ${lb.edge}'s vertical run crosses the text with no background colour, a touching knockout gap. Slide it clear (offset point) or set labelBackgroundColor`);
-        break;
-      }
+    const centre = { x: lb.x + lb.w / 2, y: lb.y + lb.h / 2 };
+    const own = runs.filter((r) => r.edge === lb.edge);
+    if (own.length === 0) continue;
+    seated += 1;
+    const nearest = own.reduce((a, b) => (distToRun(centre, a) <= distToRun(centre, b) ? a : b));
+    const where = `label ${lb.id} ("${lb.text}") on edge ${lb.edge}`;
+    const axis = nearest.vertical ? "vertical" : "horizontal";
+    const half = (nearest.vertical ? lb.w : lb.h) / 2;
+    const tol = nearest.vertical ? Math.max(CENTRE_TOL_V, lb.w * CENTRE_TOL_FRAC) : CENTRE_TOL_H;
+    const off = nearest.coord - (nearest.vertical ? centre.x : centre.y); // + is right of / below the centre
+    const alongLo = nearest.vertical ? lb.y : lb.x;
+    const alongHi = nearest.vertical ? lb.y + lb.h : lb.x + lb.w;
+    const overlaps = nearest.lo < alongHi && nearest.hi > alongLo;
+    const clearance = Math.round(Math.abs(off) - half);
+    const centred = overlaps && Math.abs(off) <= tol;
+    let crossing = centred;
+    if (centred) {
+      // seated correctly
+    } else if (nearest.vertical && off > 0 && Math.abs(off) >= half) {
+      notes.push(`${where}: its own vertical run sits ${clearance}u clear on the label's RIGHT, a run alongside may only sit on the label's left`);
+    } else if (overlaps && Math.abs(off) < half) {
+      crossing = true;
+      notes.push(`${where}: its own ${axis} run cuts the box ${Math.round(Math.abs(off))}u off the ${nearest.vertical ? "horizontal" : "vertical"} midpoint (tolerance ${Math.round(tol)}u), straddle the run centred or slide the label clear alongside it`);
+    } else if (!overlaps || clearance > ALONGSIDE) {
+      notes.push(`${where}: its own nearest run is ${Math.round(distToRun(centre, nearest))}u from the label centre, too far to ride or to sit alongside (maximum ${ALONGSIDE}u clear)`);
     }
+    const wanted = crossing && !nearest.vertical ? "left" : "center";
+    const align = lb.align ?? "center"; // the webapp's default when the style omits it
+    if (align !== wanted) {
+      notes.push(`${where}: align=${lb.align ?? "center (default, no token)"} with its own ${axis} run ${crossing ? "crossing it" : "alongside"}, the crossing axis wants align=${wanted}`);
+    }
+  }
+
+  // Golden rule, advisory: an edge label's first rendered line is the acting
+  // party, bold and colon-terminated, and its body opens with a capital.
+  for (const { cell, edge } of labelCells) {
+    const lines = renderedLines(cell.attrs.value);
+    if (lines.length === 0) continue;
+    const whole = lines.map((l) => l.text).join(" ");
+    if (CODE_LABEL.test(whole)) continue; // a call expression is code, not a description
+    const body = lines.slice(1).map((l) => l.text).join(" ").trim();
+    const faults = [];
+    if (lines[0].bold !== lines[0].text) faults.push(`its first line "${lines[0].text}" is not fully bold`);
+    if (!lines[0].text.endsWith(":")) faults.push(`its first line "${lines[0].text}" is not colon-terminated`);
+    if (body === "") faults.push("it has no body under its first line");
+    else if (!/^\p{Lu}/u.test(body)) faults.push(`its body "${body.slice(0, 24)}" does not start with a capital letter`);
+    if (faults.length > 0) {
+      notes.push(`label ${cell.id} ("${whole.slice(0, 30)}") on edge ${edge}: ${faults.join(", and ")}. An edge label reads as a bold colon-terminated actor over a capitalised body, and only a whole-text call expression (identifier immediately followed by parentheses) is exempt as a code label`);
+    }
+  }
+
+  // The webapp writes theme and scrollbar CSS into a value edited in place.
+  // A warning, not a note: it is textual, exact, and never a judgement call.
+  let valued = 0;
+  for (const c of cells.values()) {
+    if (!c.attrs.value) continue;
+    valued += 1;
+    for (const token of editorJunk(c.attrs.value)) {
+      warnings.push(`cell ${c.id}: editor-injected inline CSS in its value ("${token}"), strip it. The palette's Menlo code scaffold and the plain colour spans nested in it are the only sanctioned inline CSS`);
+    }
+  }
+
+  // A check that inspected nothing is vacuous, not green: say so rather than
+  // let an empty input set read as a pass.
+  if (labelCells.length === 0) {
+    notes.push("golden rules: this diagram carries 0 edge labels, so the format check inspected nothing (vacuous, not green)");
+  }
+  if (seated === 0) {
+    notes.push("golden rules: 0 edge labels resolved onto a run of their own edge, so the run-through-centre and alignment checks inspected nothing (vacuous, not green)");
+  }
+  if (valued === 0) {
+    notes.push("editor junk: this diagram carries 0 cell values, so the check inspected nothing (vacuous, not green)");
   }
   return { errors, warnings, notes };
 }

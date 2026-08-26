@@ -152,8 +152,15 @@ try {
   </root></mxGraphModel></diagram></mxfile>`;
   writeFileSync(join(dir, "straight.drawio"), lintable("0.5"));
   writeFileSync(join(dir, "diagonal.drawio"), lintable("0.9"));
-  run(["lint", join(dir, "straight.drawio"), "--strict"]);
+  const straightResult = run(["lint", join(dir, "straight.drawio"), "--strict"]);
   runExpectingFailure(["lint", join(dir, "diagonal.drawio")], "DIAGONAL");
+  // A label check with an empty input set is vacuous, not green, and must say so
+  // rather than let a diagram with no edge labels read as three checks passed.
+  assert.ok(
+    straightResult.stderr.includes("carries 0 edge labels") &&
+      straightResult.stderr.includes("(vacuous, not green)"),
+    `a label-free diagram must declare the label checks vacuous, got:\n${straightResult.stderr}`,
+  );
 
   // Two stacked parallel runs slightly out of column surface as an advisory note
   // (never failing: the offset may be anchor-caused, which only an eyeball can tell).
@@ -199,27 +206,87 @@ try {
   writeFileSync(join(dir, "cramped.drawio"), cramped);
   runExpectingFailure(["lint", join(dir, "cramped.drawio")], "into the arrowhead");
 
-  // A backgroundless label crossed by its own edge's vertical run is a
-  // touching knockout gap: advisory note. A background colour silences it.
-  const ownEdgeLabel = (labelStyle) => `<mxfile><diagram id="o" name="o"><mxGraphModel><root>
+  // The edge-label golden rules, all advisory. Each fixture below is the clean
+  // seat with ONE rule broken, so a check that stops firing shows up here as a
+  // planted violation nobody reports.
+  const ACTOR_LABEL = "&lt;b&gt;MPC:&lt;/b&gt;&lt;br&gt;Reads the ledger";
+  // Vertical run at x=160 between y=100 and y=240, the label riding it.
+  const ridingVertical = (offsetX, align, value = ACTOR_LABEL) => `<mxfile><diagram id="o" name="o"><mxGraphModel><root>
     <mxCell id="0" /><mxCell id="1" parent="0" />
     <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="240" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
-    <mxCell id="el" value="own edge label" style="${labelStyle}" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
   </root></mxGraphModel></diagram></mxfile>`;
-  writeFileSync(join(dir, "ownlabel.drawio"), ownEdgeLabel("edgeLabel;html=1;"));
-  const ownLabelResult = run(["lint", join(dir, "ownlabel.drawio"), "--strict"]);
-  assert.ok(
-    ownLabelResult.stderr.includes("touching knockout gap"),
-    `backgroundless own-edge label should surface a note, got:\n${ownLabelResult.stderr}`,
-  );
-  writeFileSync(join(dir, "ownlabel-bg.drawio"), ownEdgeLabel("edgeLabel;html=1;labelBackgroundColor=#FFFFFF;"));
-  const ownLabelBg = run(["lint", join(dir, "ownlabel-bg.drawio"), "--strict"]);
-  assert.ok(
-    !ownLabelBg.stderr.includes("touching knockout gap"),
-    `a label with a background must not be flagged, got:\n${ownLabelBg.stderr}`,
-  );
+  // Horizontal run at y=170 between x=160 and x=360, the label riding it.
+  const ridingHorizontal = (align, value = ACTOR_LABEL) => `<mxfile><diagram id="p" name="p"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="140" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="360" y="140" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const lintNotes = (name, xml) => {
+    writeFileSync(join(dir, `${name}.drawio`), xml);
+    return run(["lint", join(dir, `${name}.drawio`), "--strict"]).stderr;
+  };
+
+  // Run-through-centre: straddling the run centred is the sanctioned seat, and
+  // so is sitting clear on a vertical run's LEFT.
+  const seatClean = lintNotes("seat-centred", ridingVertical(0, "center"));
+  assert.ok(!seatClean.includes("RIGHT") && !seatClean.includes("midpoint"), `a centred riding label must not be flagged, got:\n${seatClean}`);
+  // The clean fixture must reach the checks, not pass them by being empty.
+  assert.ok(!seatClean.includes("vacuous"), `the seat fixture's labels must reach the checks, got:\n${seatClean}`);
+  const seatLeft = lintNotes("seat-left", ridingVertical(60, "center"));
+  assert.ok(!seatLeft.includes("RIGHT") && !seatLeft.includes("midpoint"), `a label clear on the run's left must not be flagged, got:\n${seatLeft}`);
+  // Planted: slide the label left, which puts the run on its right.
+  const seatRight = lintNotes("seat-right", ridingVertical(-60, "center"));
+  assert.ok(seatRight.includes("clear on the label's RIGHT"), `a run on the label's right must be flagged, got:\n${seatRight}`);
+  // Planted: slide it just far enough to cut the text off-centre.
+  const seatOff = lintNotes("seat-offcentre", ridingVertical(-20, "center"));
+  assert.ok(seatOff.includes("off the horizontal midpoint"), `an off-centre crossing must be flagged, got:\n${seatOff}`);
+  // Planted: slide it right off its run altogether.
+  const seatAdrift = lintNotes("seat-adrift", ridingVertical(200, "center"));
+  assert.ok(seatAdrift.includes("too far to ride or to sit alongside"), `an adrift label must be flagged, got:\n${seatAdrift}`);
+
+  // Alignment follows the crossing axis: center on a vertical run, left on a
+  // horizontal one. A missing token counts as the webapp default, center.
+  assert.ok(!lintNotes("align-v-ok", ridingVertical(0, "center")).includes("wants align"), "align=center on a vertical run must pass");
+  assert.ok(!lintNotes("align-h-ok", ridingHorizontal("left")).includes("wants align"), "align=left on a horizontal run must pass");
+  const alignV = lintNotes("align-v-bad", ridingVertical(0, "left"));
+  assert.ok(alignV.includes("wants align=center"), `align=left on a vertical run must be flagged, got:\n${alignV}`);
+  const alignH = lintNotes("align-h-bad", ridingHorizontal("center"));
+  assert.ok(alignH.includes("wants align=left"), `align=center on a horizontal crossing must be flagged, got:\n${alignH}`);
+
+  // Format: bold colon-terminated first line over a capitalised body. A label
+  // whose whole text is a call expression is code, and exempt.
+  assert.ok(!lintNotes("fmt-ok", ridingHorizontal("left")).includes("colon-terminated"), "a well-formed label must not be flagged");
+  const fmtCode = lintNotes("fmt-code", ridingHorizontal("left", "transfer(&lt;b&gt;vaultEvmAddress&lt;/b&gt;, amount)"));
+  assert.ok(!fmtCode.includes("colon-terminated"), `a code label must be exempt, got:\n${fmtCode}`);
+  const fmtBad = lintNotes("fmt-bad", ridingHorizontal("left", "reads the ledger"));
+  for (const needle of ["is not fully bold", "is not colon-terminated", "no body under its first line"]) {
+    assert.ok(fmtBad.includes(needle), `a malformed label should report "${needle}", got:\n${fmtBad}`);
+  }
+
+  // Editor junk is a WARNING, so --strict fails on it. The palette's Menlo code
+  // scaffold and the plain colour spans nested in it stay sanctioned.
+  const junkDiagram = (value) => `<mxfile><diagram id="j" name="j"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="n" value="${value}" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="200" height="40" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const SCAFFOLD = "&lt;div style=&quot;font-family: Menlo, Monaco, &amp;#39;Courier New&amp;#39;, monospace; font-size: 12px; line-height: 18px; white-space: pre;&quot;&gt;&lt;span style=&quot;color: rgb(175, 0, 219);&quot;&gt;ledger&lt;/span&gt;&lt;span style=&quot;color: rgb(32, 32, 32);&quot;&gt; &lt;b&gt;vaultEvmAddress&lt;/b&gt;&lt;/span&gt;&lt;/div&gt;";
+  writeFileSync(join(dir, "junk-clean.drawio"), junkDiagram(SCAFFOLD));
+  const junkClean = run(["lint", join(dir, "junk-clean.drawio"), "--strict"]);
+  assert.ok(!junkClean.stderr.includes("editor-injected"), `the palette code scaffold must stay sanctioned, got:\n${junkClean.stderr}`);
+  assert.ok(!junkClean.stderr.includes("editor junk: this diagram"), `the junk fixture's value must reach the check, got:\n${junkClean.stderr}`);
+  for (const [name, planted, token] of [
+    ["junk-scrollbar", "&lt;b style=&quot;scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251);&quot;&gt;MPC:&lt;/b&gt;", "scrollbar-color"],
+    ["junk-lightdark", "&lt;span style=&quot;background-color: light-dark(#ffffff, #121212);&quot;&gt;MPC&lt;/span&gt;", "light-dark("],
+    ["junk-colour", "&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;MPC&lt;/span&gt;", "color: rgb(0, 0, 0)"],
+  ]) {
+    writeFileSync(join(dir, `${name}.drawio`), junkDiagram(planted));
+    runExpectingFailure(["lint", join(dir, `${name}.drawio`), "--strict"], `editor-injected inline CSS in its value ("${token}")`);
+  }
 
   // cells and styles reports render without dumping base64.
   const cellsOut = run(["cells", source]).stdout;
