@@ -1,4 +1,5 @@
 import { parseCells } from "./lint.js";
+import { elideImagePayloads } from "./extract.js";
 
 function absOrigin(cells, id) {
   let x = 0, y = 0, cur = cells.get(id);
@@ -58,6 +59,92 @@ export function cellsReport(xml, { full = false } = {}) {
     }
   }
   return lines.join("\n");
+}
+
+// The elements that can carry a cell id. A cell wrapped for custom attributes
+// holds its id on the wrapper, with the mxCell inside carrying none.
+const ID_BEARING = ["mxCell", "object", "UserObject"];
+
+/**
+ * Walks a start tag from its `<`, returning where it ends and whether it
+ * closes itself. Quoted attribute values are skipped whole, so a `>` inside
+ * one never ends the tag early.
+ */
+function startTagEnd(xml, open) {
+  let quote = null;
+  for (let i = open + 1; i < xml.length; i += 1) {
+    const ch = xml[i];
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === ">") return { end: i, selfClosing: xml[i - 1] === "/" };
+  }
+  throw new Error(`unterminated start tag at byte ${open}`);
+}
+
+/** The byte after an element that starts at `open`, nesting of its own tag counted. */
+function elementEnd(xml, open, name) {
+  const head = startTagEnd(xml, open);
+  if (head.selfClosing) return head.end + 1;
+  const close = `</${name}>`;
+  let depth = 1, at = head.end + 1;
+  while (depth > 0) {
+    const nextClose = xml.indexOf(close, at);
+    if (nextClose === -1) throw new Error(`unclosed <${name}> element at byte ${open}`);
+    const nextOpen = xml.indexOf(`<${name}`, at);
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      at = startTagEnd(xml, nextOpen).end + 1;
+      continue;
+    }
+    depth -= 1;
+    at = nextClose + close.length;
+  }
+  return at;
+}
+
+/**
+ * Slices one cell's element out of the file's own text: the `<mxCell ...>`
+ * start tag through its close, child `<mxGeometry>`/`<Array>` included, byte
+ * for byte with no re-serialisation. This is the form to copy from when
+ * patching the file by string surgery, which the {@link cellsReport} and
+ * `extract` renderings are not: both print the webapp's spelling of the model
+ * rather than the file's. An id held by an `<object>`/`<UserObject>` wrapper
+ * slices the wrapper, so the returned text is always a whole element.
+ *
+ * @param xml - The file's text exactly as stored (for a rendered pair, the
+ *   embedded model's own bytes).
+ * @param id - The id of the cell to slice.
+ * @param elideImages - When true, embedded image payloads are replaced with
+ *   the size markers `extract --elide-images` uses. This is the one deliberate
+ *   departure from verbatim, and it exists so a cell carrying a 32KB base64
+ *   style stays readable.
+ * @returns The element's source text.
+ * @throws When no element carries the id, or when more than one does.
+ */
+export function cellXml(xml, id, { elideImages = false } = {}) {
+  const lineOf = (index) => xml.slice(0, index).split("\n").length;
+  const hits = [];
+  for (const name of ID_BEARING) {
+    for (const m of xml.matchAll(new RegExp(`<${name}(?=[\\s/>])`, "g"))) {
+      const open = m.index;
+      const head = xml.slice(open, startTagEnd(xml, open).end + 1);
+      const idAttr = head.match(/\sid="([^"]*)"/);
+      if (idAttr?.[1] === id) hits.push({ open, name });
+    }
+  }
+  if (hits.length === 0) {
+    throw new Error(`no element carries id="${id}": run "drawio-cli cells <input>" to list the ids`);
+  }
+  if (hits.length > 1) {
+    const where = hits.map((h) => `<${h.name}> at line ${lineOf(h.open)}`).join(", ");
+    throw new Error(
+      `${hits.length} elements carry id="${id}" (${where}): there is no single slice to print, ` +
+        `and duplicate ids break the webapp's model. Fix the source first.`,
+    );
+  }
+  const hit = hits[0];
+  const slice = xml.slice(hit.open, elementEnd(xml, hit.open, hit.name));
+  return elideImages ? elideImagePayloads(slice) : slice;
 }
 
 /**

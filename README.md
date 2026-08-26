@@ -113,6 +113,21 @@ style strings (image payloads stay elided), so exact styles never need a raw XML
 node src/cli.js cells diagram.drawio --full
 ```
 
+`--xml <id>` switches to a different report: the exact source bytes of one cell's element,
+`<mxCell ...>` through its close with its child `<mxGeometry>`/`<Array>` included, sliced out
+of the file with nothing re-serialised. That is the form to copy from when patching a diagram
+by string surgery. The cells table and `extract` both print the webapp's spelling of the model,
+whose attribute order and `/>` spacing differ from the file's, so a substring lifted from them
+matches nothing. An id carried by an `<object>`/`<UserObject>` wrapper slices the wrapper whole.
+An id nothing carries fails, and so does an id two elements carry, which is never resolved by
+printing the first one silently. `--elide-images` replaces an embedded image payload with the
+same size marker `extract --elide-images` writes: the one deliberate departure from verbatim,
+and what keeps a cell carrying a 32KB base64 style readable.
+
+```
+node src/cli.js cells diagram.drawio --xml some-node --elide-images
+```
+
 ### measure
 
 Measures cells of a rendered `.drawio.png` against its embedded model: pixel ink extents
@@ -129,6 +144,29 @@ visible in numbers.
 ```
 node src/cli.js measure diagram.drawio.png --cell some-node --cell some-edge-label
 ```
+
+`--fit <id>` measures that cell and adds the box its measured text ink implies under the
+uniform padding rule (8 units left and right, 6 top and bottom), plus the delta against the
+box the cell declares. Sizing a box after a text change is then one measurement instead of a
+render, measure and adjust loop. A fit id is measured whether or not `--cell` also names it,
+and an edge label, which declares no box of its own, says there is nothing to fit.
+
+`--affine` prints the mapping from model units to PNG pixels that this same calibration
+implies, per axis and in both directions, so cropping a model region out of the render is a
+substitution rather than a transcription of the calibration line. It stands on its own: with
+no cell named it prints the mapping and measures nothing.
+
+```
+node src/cli.js measure diagram.drawio.png --fit some-node --affine
+```
+
+The residual quiets down when it has nothing left to teach. A residual no wider than the
+render border's own pixel slack (the export already leaves that much room on every side) and
+attributed to named edge-label overhangs demotes to a one-line note. A residual past that
+width, or one whose only suspects are the cells that set the bounds, which is a guess rather
+than an attribution, stays a `WARNING`. `--quiet-calibration` drops the calibration line and
+that note entirely, and never the warning: the warning is the error bar on every number
+printed under it.
 
 ### styles
 

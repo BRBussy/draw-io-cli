@@ -6,15 +6,16 @@ import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
 import { lint } from "./lint.js";
-import { cellsReport, stylesReport } from "./cells.js";
+import { cellsReport, cellXml, stylesReport } from "./cells.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force] [--elide-images] [--decode-entities]
   drawio-cli render <input.drawio> [--png [path]] [--svg [path]] [--page <name|index>] [--scale <n>] [--border <n>]
   drawio-cli lint <input> [--strict]
   drawio-cli cells <input> [--full]
+  drawio-cli cells <input> --xml <id> [--elide-images]
   drawio-cli styles <input>
-  drawio-cli measure <input.drawio.png> --cell <id> [--cell <id> ...] [--scale <n>] [--border <n>]
+  drawio-cli measure <input.drawio.png> [--cell <id> ...] [--fit <id> ...] [--affine] [--quiet-calibration] [--scale <n>] [--border <n>]
   drawio-cli doctor`;
 
 function fail(message) {
@@ -89,13 +90,21 @@ function runMeasure(args) {
   let input = null;
   let scale = null;
   let border = null;
+  let affine = false;
+  let quietCalibration = false;
   const cellIds = [];
+  const fitIds = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--cell") {
       cellIds.push(args[i + 1] ?? fail("--cell requires a cell id"));
       i += 1;
-    } else if (arg === "--scale") {
+    } else if (arg === "--fit") {
+      fitIds.push(args[i + 1] ?? fail("--fit requires a cell id"));
+      i += 1;
+    } else if (arg === "--affine") affine = true;
+    else if (arg === "--quiet-calibration") quietCalibration = true;
+    else if (arg === "--scale") {
       scale = Number(args[i + 1] ?? fail("--scale requires a number"));
       i += 1;
     } else if (arg === "--border") {
@@ -105,14 +114,19 @@ function runMeasure(args) {
     else fail(`unexpected argument: ${arg}`);
   }
   if (input === null) fail(USAGE);
-  if (cellIds.length === 0) fail("measure needs at least one --cell <id>");
+  // A fit is a measurement plus a sizing verdict, so its cell is measured
+  // whether or not --cell also names it.
+  for (const id of fitIds) if (!cellIds.includes(id)) cellIds.push(id);
+  if (cellIds.length === 0 && !affine) {
+    fail("measure needs at least one --cell <id> or --fit <id>, or --affine for the mapping alone");
+  }
   const config = loadRenderConfig(input);
   if (config.path !== null && (scale === null || border === null)) console.error(`config: ${config.path}`);
   scale = scale ?? config.scale ?? 3;
   border = border ?? config.border ?? 10;
   const raw = readFileSync(input);
   const xml = extractMxfile(raw);
-  console.log(measure(raw, xml, { cellIds, scale, border }));
+  console.log(measure(raw, xml, { cellIds, fitIds, affine, scale, border, quietCalibration }));
 }
 
 /** Strips render input suffixes down to the base name shared by all outputs. */
@@ -191,6 +205,41 @@ async function runRender(args) {
   }
 }
 
+/**
+ * Reads a diagram as its stored text: a .drawio's own bytes, or the model a
+ * rendered pair embeds. Nothing is re-serialised, so a slice of the result is
+ * a slice of the file.
+ */
+function readStoredXml(input) {
+  const raw = readFileSync(input);
+  return /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
+}
+
+function runCells(args) {
+  let input = null;
+  let full = false;
+  let xmlId = null;
+  let elide = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--full") full = true;
+    else if (arg === "--xml") {
+      xmlId = args[i + 1] ?? fail("--xml requires a cell id");
+      i += 1;
+    } else if (arg === "--elide-images") elide = true;
+    else if (input === null) input = arg;
+    else fail(`unexpected argument: ${arg}`);
+  }
+  if (input === null) fail(USAGE);
+  if (xmlId === null) {
+    if (elide) fail("--elide-images belongs to cells --xml <id>: the cells table always elides image payloads");
+    console.log(cellsReport(readStoredXml(input), { full }));
+    return;
+  }
+  if (full) fail("--full and --xml are different reports: --xml prints one cell's source bytes, never truncated");
+  console.log(cellXml(readStoredXml(input), xmlId, { elideImages: elide }));
+}
+
 function runLint(args) {
   let input = null;
   let strict = false;
@@ -200,9 +249,7 @@ function runLint(args) {
     else fail(`unexpected argument: ${arg}`);
   }
   if (input === null) fail(USAGE);
-  const raw = readFileSync(input);
-  const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
-  const { errors, warnings, notes } = lint(xml);
+  const { errors, warnings, notes } = lint(readStoredXml(input));
   for (const n of notes) console.error(`note: ${n}`);
   for (const w of warnings) console.error(`warning: ${w}`);
   for (const e of errors) console.error(`error: ${e}`);
@@ -215,12 +262,12 @@ async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "extract") runExtract(args);
   else if (command === "lint") runLint(args);
-  else if (command === "cells" || command === "styles") {
-    const full = args.includes("--full");
-    const input = args.filter((a) => a !== "--full")[0] ?? fail(USAGE);
-    const raw = readFileSync(input);
-    const xml = /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
-    console.log(command === "cells" ? cellsReport(xml, { full }) : stylesReport(xml));
+  else if (command === "cells") runCells(args);
+  else if (command === "styles") {
+    const [input, ...rest] = args;
+    if (input === undefined) fail(USAGE);
+    if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`);
+    console.log(stylesReport(readStoredXml(input)));
   }
   else if (command === "render") await runRender(args);
   else if (command === "measure") runMeasure(args);

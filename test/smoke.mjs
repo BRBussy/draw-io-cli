@@ -128,6 +128,40 @@ try {
   const labelCellsFull = run(["cells", source, "--full"]).stdout;
   assert.ok(labelCellsFull.includes("spacing=2;"), "cells --full must print the untruncated style");
 
+  // cells --xml: one cell's element sliced out of the file's own bytes, so a
+  // substring copied from it matches the file during string surgery. The
+  // report forms cannot do this: extract's XML is the webapp's spelling of the
+  // model, with its own attribute order and its own `/>` spacing.
+  const sliced = run(["cells", source, "--xml", "2"]).stdout.replace(/\n$/, "");
+  assert.ok(sliced.includes('id="2"') && sliced.includes("<mxGeometry"), `--xml must slice the whole element, got:\n${sliced}`);
+  assert.ok(HELLO_DRAWIO.includes(sliced), `--xml must be byte-verbatim source, got:\n${sliced}`);
+  assert.ok(
+    !readFileSync(join(dir, "roundtrip.drawio"), "utf8").includes(sliced),
+    "the re-serialised model spells this cell identically, so --xml has nothing to solve here: pick a cell the webapp respells",
+  );
+  // An id held by a wrapper element slices the wrapper, never a headless mxCell.
+  const wrapped = `<mxfile><diagram id="w" name="w"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <object id="ob" label="wrapped"><mxCell style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="0" y="0" width="80" height="40" as="geometry"/></mxCell></object>
+  </root></mxGraphModel></diagram></mxfile>`;
+  writeFileSync(join(dir, "wrapped.drawio"), wrapped);
+  const wrappedSlice = run(["cells", join(dir, "wrapped.drawio"), "--xml", "ob"]).stdout;
+  assert.ok(wrappedSlice.startsWith("<object") && wrappedSlice.includes("</object>"), `--xml must slice the id-bearing wrapper whole, got:\n${wrappedSlice}`);
+  // A 32KB base64 style would flood the output, so --elide-images marks it the
+  // way extract does, and the surrounding bytes stay untouched.
+  const imageCell = '<mxCell id="ic" value="" style="shape=image;image=data:image/png,iVBORw0KGgoAAAANSUhEUg%2BAAAA;" vertex="1" parent="1"><mxGeometry x="500" y="40" width="20" height="20" as="geometry"/></mxCell>';
+  writeFileSync(join(dir, "xmlicon.drawio"), HELLO_DRAWIO.replace("</root>", `${imageCell}</root>`));
+  const elidedSlice = run(["cells", join(dir, "xmlicon.drawio"), "--xml", "ic", "--elide-images"]).stdout;
+  assert.ok(!elidedSlice.includes("iVBOR"), "cells --xml --elide-images left the base64 payload in place");
+  assert.ok(elidedSlice.includes("[elided") && elidedSlice.includes('as="geometry"/>'), `elided slice must keep the source's own spelling, got:\n${elidedSlice}`);
+  // An id nobody carries, and an id two elements carry, both fail loudly.
+  runExpectingFailure(["cells", source, "--xml", "nosuch"], 'no element carries id="nosuch"');
+  writeFileSync(join(dir, "twins.drawio"), HELLO_DRAWIO.replace('id="3"', 'id="2"'));
+  runExpectingFailure(["cells", join(dir, "twins.drawio"), "--xml", "2"], '2 elements carry id="2"');
+  // The table's flags and the slice's flags are not interchangeable.
+  runExpectingFailure(["cells", source, "--xml", "2", "--full"], "different reports");
+  runExpectingFailure(["cells", source, "--elide-images"], "belongs to cells --xml");
+
   // measure: an edge label resolves its anchor on the parent edge's pinned
   // polyline and reports ink inside its estimated box.
   const labelMeasure = run(["measure", join(dir, "hello.drawio.png"), "--cell", "4l"]).stdout;
@@ -377,6 +411,79 @@ try {
   assert.ok(padMatch, `measure lacks a padding readout:\n${mOut}`);
   const left = Number(padMatch[1]);
   assert.ok(left > 12 && left < 28, `spacingLeft=20 should measure ~20u of left padding, got ${left}`);
+
+  // measure --fit: the box the uniform padding rule implies for the ink just
+  // measured, and how far the declared box is from it. The expectation is
+  // recomputed here from the ink the same run reported, so a fit that stopped
+  // following the rule cannot pass by agreeing with itself.
+  const fitOut = run(["measure", join(dir, "measured.drawio.png"), "--fit", "padded", "--scale", "3", "--border", "10"]).stdout;
+  const inkMatch = fitOut.match(/cell padded: .*ink ([\d.]+)x([\d.]+)u/);
+  assert.ok(inkMatch, `--fit must measure the cell as usual first:\n${fitOut}`);
+  const [inkW, inkH] = [Number(inkMatch[1]), Number(inkMatch[2])];
+  assert.ok(inkW > 0 && inkH > 0, "the fit fixture must have ink to size against");
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const expected =
+    `fit padded: ink ${inkW}x${inkH}u + padding 8u L/R 6u T/B -> implied box ` +
+    `${round1(inkW + 16)}x${round1(inkH + 12)}u, declared 200x60u, ` +
+    `delta ${round1(inkW + 16 - 200)}x${round1(inkH + 12 - 60)}u`;
+  assert.ok(fitOut.includes(expected), `fit line should read "${expected}", got:\n${fitOut}`);
+  // A fit id needs no --cell of its own, and an edge label has no declared box to fit.
+  const fitLabel = run(["measure", join(dir, "hello.drawio.png"), "--fit", "4l"]).stdout;
+  assert.match(fitLabel, /fit 4l: an edge label declares no box/, "a fit on an edge label must say there is nothing to fit");
+
+  // measure --affine: the model-to-pixel mapping written out, per axis and both
+  // ways. The numbers are re-derived here from the calibration line of the same
+  // run, so an affine drifting from the calibration it claims to publish fails.
+  const affineOut = run(["measure", join(dir, "measured.drawio.png"), "--affine", "--scale", "3", "--border", "10"]).stdout;
+  const cal = affineOut.match(/model=\((-?[\d.]+),(-?[\d.]+)\).* residual=(-?\d+),(-?\d+)px/);
+  assert.ok(cal, `--affine must still print the calibration it derives from:\n${affineOut}`);
+  const [minX, minY, resW, resH] = cal.slice(1, 5).map(Number);
+  const offX = 10 * 3 + Math.trunc(resW / 2);
+  const offY = 10 * 3 + Math.trunc(resH / 2);
+  for (const line of [
+    `affine x: px = (mx - ${minX}) * 3 + ${offX}`,
+    `affine x: mx = (px - ${offX}) / 3 + ${minX}`,
+    `affine y: py = (my - ${minY}) * 3 + ${offY}`,
+    `affine y: my = (py - ${offY}) / 3 + ${minY}`,
+  ]) {
+    assert.ok(affineOut.includes(line), `affine should publish "${line}", got:\n${affineOut}`);
+  }
+  // --affine stands alone: it is the mapping, not a measurement of any cell.
+  assert.ok(!affineOut.includes("cell "), `--affine alone must measure nothing, got:\n${affineOut}`);
+  runExpectingFailure(["measure", join(dir, "measured.drawio.png")], "measure needs at least one");
+
+  // A residual attributed to named label overhangs and no wider than the render
+  // border's own pixel slack is a known, harmless mismatch: a one-line note, not
+  // the warning an agent learns to grep away. The same PNG read against a border
+  // too small to absorb it warns as before.
+  const overhanging = `<mxfile><diagram id="oh" name="oh"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="300" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=1;exitY=1;entryX=0;entryY=1;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="hop" style="edgeLabel;html=1;align=center;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const ohSource = join(dir, "overhang.drawio");
+  writeFileSync(ohSource, overhanging);
+  run(["render", ohSource, "--png", "--scale", "3", "--border", "25"]);
+  const ohPng = join(dir, "overhang.drawio.png");
+  const demoted = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "25"]).stdout;
+  assert.match(demoted, /calibration: note residual -?\d+,-?\d+px is within the render border \(25u = 75px\) and attributed\. Estimated edge-label overhangs: el /, `an attributed residual inside the border must demote to a note, got:\n${demoted}`);
+  assert.ok(!demoted.includes("WARNING"), `a demoted residual must not also warn, got:\n${demoted}`);
+  // Same pixels, a border too small to absorb the same overhang: still a warning.
+  const loud = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "10"]).stdout;
+  assert.ok(loud.includes("calibration: WARNING") && loud.includes("overhangs: el "), `a residual past the border must stay a warning, got:\n${loud}`);
+  // Small but unattributed (no edge labels at all, so the suspects are a guess):
+  // never demoted, since nothing has explained it.
+  const vague = run(["measure", join(dir, "measured.drawio.png"), "--cell", "padded", "--scale", "3", "--border", "12"]).stdout;
+  assert.ok(vague.includes("calibration: WARNING") && vague.includes("Bounds are set by"), `an unattributed residual must stay a warning, got:\n${vague}`);
+  // --quiet-calibration drops the line and the note, and keeps the warning: it
+  // is the error bar on every number under it.
+  const quiet = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "25", "--quiet-calibration"]).stdout;
+  assert.ok(!quiet.includes("calibration:"), `--quiet-calibration must drop the calibration lines, got:\n${quiet}`);
+  assert.ok(quiet.includes("cell a: box"), "--quiet-calibration must keep the measurements");
+  const quietLoud = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "10", "--quiet-calibration"]).stdout;
+  assert.ok(quietLoud.includes("calibration: WARNING"), `--quiet-calibration must never hide a warning, got:\n${quietLoud}`);
 
   console.log("smoke test passed");
 } finally {
