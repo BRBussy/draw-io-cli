@@ -120,7 +120,24 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    run to an exact x or y. Read every `note:` line lint prints — notes never fail the run
    because only an eyeball can judge them (an oversized code box, stacked runs slightly out
    of column). For each note either fix the geometry or confirm the layout is forced by an
-   anchor rule (anchors always win); never just ignore the line.
+   anchor rule (anchors always win); never just ignore the line. A note that says a check
+   was "vacuous, not green" means that check's input set was empty: treat it as a gap in
+   coverage, not as a pass.
+0c. Edge labels get three advisory checks of their own, so read those notes as a group:
+   a riding label must straddle its own edge's nearest run through its centre band, or sit
+   clear alongside with the run on its LEFT (vertical run) or its top or bottom (horizontal
+   run), never on its right; `align=left` when the run crosses it horizontally and
+   `align=center` when the run is vertical or the label sits alongside; and the first
+   rendered line bold and colon-terminated over a capitalised body, with a whole-text call
+   expression (`transfer(vaultEvmAddress, amount)`) exempt as a code label. An edge whose
+   two endpoints are BOTH degenerate specimen points (each 4 units or smaller) demonstrates
+   a style instead of connecting shapes, so its label is a legend caption naming the swatch:
+   alignment and format skip it, seating does not. Editor-injected
+   inline CSS inside a cell value (`scrollbar-color`, `light-dark(`, a stray `color:` or
+   `background-color:` span) is a WARNING, so `--strict` fails on it: strip the styling the
+   editor wrote. A code cell's Menlo font scaffold and the plain colour spans nested in it
+   are the sanctioned exception, since that is how a contract-member row gets its keyword
+   colour.
 6. Line jumps (`jumpStyle=arc;jumpSize=10`): the edge carrying the style renders a hop
    wherever it crosses another edge, on either side of it in declaration order. Choose
    which edge of a crossing pair should visually break, put the style on that one, and

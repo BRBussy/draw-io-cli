@@ -68,11 +68,33 @@ and declare jogs as explicit waypoints: edges with floating connections are repo
 warnings, since their rendered route is the router's guess. Errors exit 1, `--strict`
 makes warnings fail too.
 
+A cell value carrying editor-injected inline CSS is a warning: the webapp writes
+`scrollbar-color`, `light-dark(...)` and stray `color:` / `background-color:` declarations
+into a value the moment it is edited in place, and they survive into the committed file as
+styling nobody chose. The one sanctioned inline CSS is a code cell's Menlo `font-family`
+scaffold together with the plain single-colour spans nested inside it, which is how a
+contract-member row carries its keyword colour.
+
 Advisory `note:` lines never fail a run: estimated label boxes crossed by another edge's
 run, overlapping label boxes, stacked runs out of column, code boxes not hugging their
-text, and a backgroundless edge label whose own edge crosses it on a vertical run (the
-webapp knocks the line out behind the text, but a perpendicular crossing leaves a
-touching gap: slide the label clear with an offset point or set `labelBackgroundColor`).
+text, and the three edge-label golden rules. A riding label must straddle its own edge's
+nearest run through its centre band, or sit clear alongside with the run on its LEFT (a
+vertical run) or its top or bottom (a horizontal one): a vertical run on the label's right
+is always a strike. Its `align` token must be `left` when the run crosses it horizontally
+and `center` when the run is vertical or the label sits alongside (a missing token counts
+as the webapp default, `center`). Its first rendered line must be bold and
+colon-terminated over a capitalised body, unless the whole text is a call expression (an
+identifier immediately followed by parentheses), which is a code label and exempt.
+
+An edge whose two endpoints are both degenerate specimen points (each 4 units or smaller)
+demonstrates a style rather than connecting two shapes, so its label is a legend caption
+naming the swatch: it has no acting party and no reading axis, and the alignment and
+format rules skip it. Seating still holds, since a caption riding its swatch crookedly is
+a defect on a copy-source card.
+
+A check whose input set is empty says so rather than pass quietly: a diagram with no edge
+labels reports the label checks as vacuous, not green, and so does one whose labels are
+all legend captions, with the exempted count named.
 
 ```
 node src/cli.js lint diagram.drawio

@@ -288,6 +288,33 @@ try {
     runExpectingFailure(["lint", join(dir, `${name}.drawio`), "--strict"], `editor-injected inline CSS in its value ("${token}")`);
   }
 
+  // A swatch edge connects two degenerate specimen points, so its label is a
+  // legend caption naming the style it demonstrates: exempt from alignment and
+  // format, still held to its seat. The control below is the same label on an
+  // edge with real endpoints, where both rules apply.
+  const swatch = (endpointSize, offsetX) => `<mxfile><diagram id="w" name="w"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="src" value="" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="100" width="${endpointSize}" height="${endpointSize}" as="geometry" /></mxCell>
+    <mxCell id="tgt" value="" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="300" width="${endpointSize}" height="${endpointSize}" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="src" target="tgt"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="request phase" style="edgeLabel;html=1;align=left;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const specimenSeated = lintNotes("swatch-specimen", swatch(1, 0));
+  assert.ok(!specimenSeated.includes("wants align"), `a legend caption on a specimen edge must be exempt from alignment, got:\n${specimenSeated}`);
+  assert.ok(!specimenSeated.includes("colon-terminated"), `a legend caption on a specimen edge must be exempt from format, got:\n${specimenSeated}`);
+  // Exempting every label is lost coverage, not two rules held.
+  assert.ok(
+    specimenSeated.includes("1 legend caption(s) on specimen edges exempt") && specimenSeated.includes("(vacuous, not green)"),
+    `an all-specimen diagram must declare the exempted checks vacuous, got:\n${specimenSeated}`,
+  );
+  // Seating still applies to a specimen: its run may not sit on the caption's right.
+  const specimenCrooked = lintNotes("swatch-crooked", swatch(1, -60));
+  assert.ok(specimenCrooked.includes("clear on the label's RIGHT"), `a crooked legend caption must still be flagged, got:\n${specimenCrooked}`);
+  // The control: real endpoints make the same label a description again.
+  const swatchControl = lintNotes("swatch-control", swatch(60, 0));
+  assert.ok(swatchControl.includes("wants align=center"), `a label on an edge with real endpoints must be aligned, got:\n${swatchControl}`);
+  assert.ok(swatchControl.includes("is not colon-terminated"), `a label on an edge with real endpoints must be formatted, got:\n${swatchControl}`);
+
   // cells and styles reports render without dumping base64.
   const cellsOut = run(["cells", source]).stdout;
   assert.ok(cellsOut.includes("SHAPE") && cellsOut.includes("EDGE"), "cells report lacks shapes or edges");

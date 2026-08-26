@@ -82,6 +82,21 @@ function bbox(cells, id) {
   };
 }
 
+const SPECIMEN = 4; // units: an endpoint this small is a degenerate anchor point, not a shape
+
+/**
+ * True when BOTH of an edge's endpoints are degenerate specimen points. Such an
+ * edge demonstrates a style rather than connecting two shapes, so its label is a
+ * legend caption naming what the swatch shows, not a description of an action.
+ */
+export function isSpecimenEdge(cells, e) {
+  const point = (id) => {
+    const box = bbox(cells, id);
+    return box !== null && box.w <= SPECIMEN && box.h <= SPECIMEN;
+  };
+  return point(e.attrs.source) && point(e.attrs.target);
+}
+
 function pinnedPoint(box, fx, fy, dx, dy) {
   return { x: box.x + Number(fx) * box.w + Number(dx ?? 0), y: box.y + Number(fy) * box.h + Number(dy ?? 0) };
 }
@@ -400,14 +415,15 @@ export function lint(xml) {
     if (c.attrs.vertex !== "1" || !c.geo) continue;
     const parentEdge = cells.get(c.attrs.parent);
     if (parentEdge?.attrs.edge !== "1") continue;
-    labelCells.push({ cell: c, edge: parentEdge.id });
+    const specimen = isSpecimenEdge(cells, parentEdge);
+    labelCells.push({ cell: c, edge: parentEdge.id, specimen });
     const pts = polylines.get(parentEdge.id);
     if (!pts) continue;
     const anchor = labelAnchor(pts, c.geo.x, c.offset);
     if (!anchor) continue;
     const est = estimateLabelBox(c.attrs.value);
     labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - est.w / 2, y: anchor.y - est.h / 2,
-      w: est.w, h: est.h, text: est.text, align: c.style.align });
+      w: est.w, h: est.h, text: est.text, align: c.style.align, specimen });
   }
   const PEN = 2; // units a run must penetrate an estimated box before it is worth a note
   for (const lb of labelBoxes) {
@@ -439,7 +455,10 @@ export function lint(xml) {
   // The same nearest run fixes the alignment rule: `align=left` when the run
   // crosses the label horizontally, `align=center` when the run is vertical or
   // the label sits alongside. A missing token is the webapp default, center.
-  let seated = 0;
+  // Alignment is the acting party's reading axis, which a legend caption on a
+  // specimen edge has none of, so specimens are exempt from it. Seating is not:
+  // a caption riding its swatch crookedly is a defect on a copy-source card.
+  let seated = 0, aligned = 0;
   for (const lb of labelBoxes) {
     const centre = { x: lb.x + lb.w / 2, y: lb.y + lb.h / 2 };
     const own = runs.filter((r) => r.edge === lb.edge);
@@ -457,16 +476,18 @@ export function lint(xml) {
     const clearance = Math.round(Math.abs(off) - half);
     const centred = overlaps && Math.abs(off) <= tol;
     let crossing = centred;
-    if (centred) {
-      // seated correctly
-    } else if (nearest.vertical && off > 0 && Math.abs(off) >= half) {
-      notes.push(`${where}: its own vertical run sits ${clearance}u clear on the label's RIGHT, a run alongside may only sit on the label's left`);
-    } else if (overlaps && Math.abs(off) < half) {
-      crossing = true;
-      notes.push(`${where}: its own ${axis} run cuts the box ${Math.round(Math.abs(off))}u off the ${nearest.vertical ? "horizontal" : "vertical"} midpoint (tolerance ${Math.round(tol)}u), straddle the run centred or slide the label clear alongside it`);
-    } else if (!overlaps || clearance > ALONGSIDE) {
-      notes.push(`${where}: its own nearest run is ${Math.round(distToRun(centre, nearest))}u from the label centre, too far to ride or to sit alongside (maximum ${ALONGSIDE}u clear)`);
+    if (!centred) {
+      if (nearest.vertical && off > 0 && Math.abs(off) >= half) {
+        notes.push(`${where}: its own vertical run sits ${clearance}u clear on the label's RIGHT, a run alongside may only sit on the label's left`);
+      } else if (overlaps && Math.abs(off) < half) {
+        crossing = true;
+        notes.push(`${where}: its own ${axis} run cuts the box ${Math.round(Math.abs(off))}u off the ${nearest.vertical ? "horizontal" : "vertical"} midpoint (tolerance ${Math.round(tol)}u), straddle the run centred or slide the label clear alongside it`);
+      } else if (!overlaps || clearance > ALONGSIDE) {
+        notes.push(`${where}: its own nearest run is ${Math.round(distToRun(centre, nearest))}u from the label centre, too far to ride or to sit alongside (maximum ${ALONGSIDE}u clear)`);
+      }
     }
+    if (lb.specimen) continue;
+    aligned += 1;
     const wanted = crossing && !nearest.vertical ? "left" : "center";
     const align = lb.align ?? "center"; // the webapp's default when the style omits it
     if (align !== wanted) {
@@ -475,8 +496,13 @@ export function lint(xml) {
   }
 
   // Golden rule, advisory: an edge label's first rendered line is the acting
-  // party, bold and colon-terminated, and its body opens with a capital.
-  for (const { cell, edge } of labelCells) {
+  // party, bold and colon-terminated, and its body opens with a capital. A
+  // legend caption on a specimen edge names a style, has no acting party, and
+  // is exempt.
+  let formatted = 0;
+  for (const { cell, edge, specimen } of labelCells) {
+    if (specimen) continue;
+    formatted += 1;
     const lines = renderedLines(cell.attrs.value);
     if (lines.length === 0) continue;
     const whole = lines.map((l) => l.text).join(" ");
@@ -504,12 +530,17 @@ export function lint(xml) {
   }
 
   // A check that inspected nothing is vacuous, not green: say so rather than
-  // let an empty input set read as a pass.
+  // let an empty input set read as a pass. An all-specimen diagram exempts its
+  // way to silence on alignment and format, which must read as coverage lost,
+  // not as two rules held.
+  const specimens = labelCells.filter((l) => l.specimen).length;
+  const exempt = `${specimens} legend caption(s) on specimen edges exempt`;
   if (labelCells.length === 0) {
-    notes.push("golden rules: this diagram carries 0 edge labels, so the format check inspected nothing (vacuous, not green)");
-  }
-  if (seated === 0) {
-    notes.push("golden rules: 0 edge labels resolved onto a run of their own edge, so the run-through-centre and alignment checks inspected nothing (vacuous, not green)");
+    notes.push("golden rules: this diagram carries 0 edge labels, so the run-through-centre, alignment and format checks inspected nothing (vacuous, not green)");
+  } else {
+    if (seated === 0) notes.push("golden rules: 0 edge labels resolved onto a run of their own edge, so the run-through-centre check inspected nothing (vacuous, not green)");
+    if (aligned === 0) notes.push(`golden rules: 0 edge labels reached the alignment check (${exempt}), so it inspected nothing (vacuous, not green)`);
+    if (formatted === 0) notes.push(`golden rules: 0 edge labels reached the format check (${exempt}), so it inspected nothing (vacuous, not green)`);
   }
   if (valued === 0) {
     notes.push("editor junk: this diagram carries 0 cell values, so the check inspected nothing (vacuous, not green)");
