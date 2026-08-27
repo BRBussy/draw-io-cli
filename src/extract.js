@@ -1,4 +1,5 @@
 import { inflateRawSync } from "node:zlib";
+import he from "he";
 
 /**
  * Reads the mxfile XML embedded in a .drawio.png buffer. The model sits in
@@ -34,21 +35,7 @@ export function mxfileFromSvg(svg) {
   if (!root) {
     throw new Error("no content attribute found on the root svg element");
   }
-  return decodeEntities(root[1]);
-}
-
-function decodeEntities(text) {
-  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, entity) => {
-    if (entity[0] === "#") {
-      const code =
-        entity[1] === "x" || entity[1] === "X"
-          ? parseInt(entity.slice(2), 16)
-          : parseInt(entity.slice(1), 10);
-      return String.fromCodePoint(code);
-    }
-    const named = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" }[entity];
-    return named ?? whole;
-  });
+  return he.decode(root[1], { isAttributeValue: true });
 }
 
 /**
@@ -96,9 +83,10 @@ export function elideImagePayloads(xml) {
  */
 export function decodeNumericEntities(xml) {
   const structural = new Set([34, 38, 60, 62]);
-  return xml.replace(/&#(x?[0-9a-fA-F]+);/g, (whole, num) => {
-    const code = num[0] === "x" || num[0] === "X" ? parseInt(num.slice(1), 16) : parseInt(num, 10);
-    if (!Number.isFinite(code) || structural.has(code)) return whole;
-    return String.fromCodePoint(code);
+  return xml.replace(/&#x?[0-9a-fA-F]+;/g, (whole) => {
+    const decoded = he.decode(whole);
+    // A reference he leaves standing still opens with "&", itself structural,
+    // so an unreadable one keeps its source spelling.
+    return structural.has(decoded.codePointAt(0)) ? whole : decoded;
   });
 }

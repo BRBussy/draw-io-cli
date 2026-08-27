@@ -5,6 +5,9 @@
  * route a literal polyline the checks below can verify exactly.
  */
 
+import he from "he";
+import { XMLParser } from "fast-xml-parser";
+
 const MICRO = 15; // units: a nonzero run shorter than this is a stutter, not a jog
 const TAIL = 40; // units: minimum first/last segment on an edge that has a corner
 const CLEAR = 20; // units: minimum distance from an arrowhead to any other edge
@@ -22,11 +25,60 @@ const POISON_IDS = new Set(["map", "filter", "target", "constructor", "proto", "
 // the "bold actor prefix, capitalised body" format does not apply to it.
 const CODE_LABEL = /^[A-Za-z_$][\w$.]*\([^()]*\)$/;
 
-function attrs(chunk) {
-  const out = {};
-  for (const m of chunk.matchAll(/([\w:-]+)="([^"]*)"/g)) out[m[1]] = m[2];
+// Every switch here holds an attribute to the exact characters the file spells
+// it with, which the whole model view depends on: entities stay encoded (a
+// value reaches decodeEntities raw and is decoded to a fixpoint there), nothing
+// is coerced to a number or a boolean (vertex="1" and every geometry figure are
+// compared and converted as strings by their readers), and no value is trimmed.
+// preserveOrder additionally keeps the file's element sequence, which is the
+// order the cell listing prints in.
+const XML = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  parseAttributeValue: false,
+  processEntities: false,
+  allowBooleanAttributes: false,
+  preserveOrder: true,
+  trimValues: false,
+});
+
+// Under preserveOrder a node is one element: its tag name keyed to its child
+// list, plus an optional ":@" holding its attributes. Text lands under "#text"
+// with a string payload instead of a child list.
+const ATTRS = ":@";
+const tagOf = (node) => Object.keys(node).find((k) => k !== ATTRS);
+const attrsOf = (node) => node[ATTRS] ?? {};
+const childrenOf = (node, tag) => (Array.isArray(node[tag]) ? node[tag] : []);
+
+/** Appends every mxCell element under `nodes`, in document order. */
+function collectCells(nodes, out) {
+  for (const node of nodes) {
+    const tag = tagOf(node);
+    if (tag === undefined || tag === "#text") continue;
+    if (tag === "mxCell") out.push(node);
+    collectCells(childrenOf(node, tag), out);
+  }
   return out;
 }
+
+/**
+ * The first element named `tag` whose attributes satisfy `accept`, searched
+ * depth first inside ONE cell's own subtree. A nested mxCell opens another
+ * cell's subtree and is not descended into, so a cell claims only its own
+ * geometry, waypoints and offset.
+ */
+function findIn(nodes, tag, accept) {
+  for (const node of nodes) {
+    const name = tagOf(node);
+    if (name === undefined || name === "#text" || name === "mxCell") continue;
+    if (name === tag && accept(attrsOf(node))) return node;
+    const hit = findIn(childrenOf(node, name), tag, accept);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const pointOf = (a) => ({ x: Number(a.x ?? 0), y: Number(a.y ?? 0) });
 
 function styleMap(style) {
   const out = {};
@@ -38,29 +90,44 @@ function styleMap(style) {
   return out;
 }
 
-/** Parses the flat cell list of the FIRST diagram in the mxfile. */
+/**
+ * Parses every mxCell in the mxfile into a map keyed by cell id, in document
+ * order. Attribute values are the file's own characters, entities and all.
+ * A cell wrapped in an `<object>`/`<UserObject>` carries its id on the wrapper,
+ * so the wrapped mxCell has none and is skipped along with any other id-less
+ * cell.
+ *
+ * @throws When the text is not well-formed XML.
+ */
 export function parseCells(xml) {
+  let doc;
+  try {
+    doc = XML.parse(xml);
+  } catch (cause) {
+    throw new Error(`the model is not well-formed XML (${cause.message}), fix the source before trusting any check`, { cause });
+  }
   const cells = new Map();
-  const chunks = xml.split(/<mxCell\b/).slice(1);
-  for (const chunk of chunks) {
-    const head = chunk.slice(0, chunk.search(/\/?>/));
-    const a = attrs(head);
-    const body = chunk.slice(0, (() => { const i = chunk.indexOf("<mxCell"); return i === -1 ? chunk.length : i; })());
-    const geoM = body.match(/<mxGeometry\b([^>]*)>?/);
-    const geo = geoM ? attrs(geoM[1]) : null;
-    const points = [];
-    const arr = body.match(/<Array as="points">([\s\S]*?)<\/Array>/);
-    if (arr) for (const p of arr[1].matchAll(/<mxPoint\b([^>]*)\/>/g)) {
-      const pa = attrs(p[1]);
-      points.push({ x: Number(pa.x ?? 0), y: Number(pa.y ?? 0) });
-    }
-    const offM = body.match(/<mxPoint\b([^>]*)as="offset"[^>]*\/>/);
-    const offset = offM ? (() => { const oa = attrs(offM[1] + 'as="offset"'); return { x: Number(oa.x ?? 0), y: Number(oa.y ?? 0) }; })() : null;
+  for (const node of collectCells(doc, [])) {
+    const a = attrsOf(node);
     // A cell without an id cannot be addressed or parented to, and storing it
     // under the key undefined would make absOrigin's parent walk cyclic (the
     // root's missing parent attribute resolves to it).
     if (a.id === undefined) continue;
-    cells.set(a.id, { id: a.id, attrs: a, style: styleMap(a.style), geo, points, offset });
+    const own = childrenOf(node, "mxCell");
+    const geoNode = findIn(own, "mxGeometry", () => true);
+    const arrayNode = findIn(own, "Array", (at) => at.as === "points");
+    const offsetNode = findIn(own, "mxPoint", (at) => at.as === "offset");
+    const points = arrayNode === undefined
+      ? []
+      : childrenOf(arrayNode, "Array").filter((p) => tagOf(p) === "mxPoint").map((p) => pointOf(attrsOf(p)));
+    cells.set(a.id, {
+      id: a.id,
+      attrs: a,
+      style: styleMap(a.style),
+      geo: geoNode === undefined ? null : attrsOf(geoNode),
+      points,
+      offset: offsetNode === undefined ? null : pointOf(attrsOf(offsetNode)),
+    });
   }
   return cells;
 }
@@ -184,19 +251,17 @@ export function labelAnchor(pts, t, offset) {
   return offset ? { x: anchor.x + offset.x, y: anchor.y + offset.y } : anchor;
 }
 
-const NAMED_ENTITIES = { lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", amp: "&" };
-
 /**
  * Decodes a cell value's XML entities to a fixpoint. A value round-tripped
  * through the webapp's editor is often doubly encoded (`&amp;lt;b&amp;gt;`),
- * so a single pass leaves markup still spelled as text.
+ * so a single pass leaves markup still spelled as text. A non-breaking space
+ * lands as a plain space: the measurements downstream size it as one, and a
+ * label's text reads as one.
  */
 export function decodeEntities(value) {
   let text = value ?? "";
   for (let pass = 0; pass < 8; pass += 1) {
-    const next = text
-      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-      .replace(/&(lt|gt|quot|apos|nbsp|amp);/g, (_, n) => NAMED_ENTITIES[n]);
+    const next = he.decode(text, { isAttributeValue: true }).replaceAll("\u00a0", " ");
     if (next === text) break;
     text = next;
   }
@@ -352,13 +417,16 @@ export function lint(xml) {
   );
 
   // A parse that lost most of the file must fail loudly, never lint the
-  // remainder as if it were the diagram: a malformed geometry splice once
-  // loaded 2 of 145 cells and linted green.
+  // remainder as if it were the diagram. The count it is held against is taken
+  // from the raw text on purpose, so the check stays independent of the parse
+  // it is checking: deriving it from the parsed model would make the two sides
+  // agree by construction and the check vacuous.
   const rawCount = (xml.match(/<mxCell[\s>/]/g) ?? []).length;
   if (rawCount > 0 && cells.size < rawCount / 2) {
     errors.push(
       `parsed ${cells.size} of ${rawCount} mxCell elements: the model is malformed ` +
-        `(a broken geometry or points splice is the usual cause), fix the source before trusting any check`,
+        `(a splice that buried cells in a comment or a CDATA block is the usual cause), ` +
+        `fix the source before trusting any check`,
     );
   }
 

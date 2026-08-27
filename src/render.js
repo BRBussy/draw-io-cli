@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, normalize, extname } from "node:path";
 import { chromium } from "playwright";
+import he from "he";
 import { BOOTSTRAP_HTML, HOST_HTML, locateWebapp } from "./webapp.js";
 
 const MIME_TYPES = {
@@ -75,7 +76,7 @@ export function selectPage(xml, page) {
   if (diagrams.length === 0) throw new Error("no diagram elements found in the mxfile");
   let chosen = diagrams.find((d) => {
     const name = d.match(/^<diagram\b[^>]*?\sname="([^"]*)"/);
-    return name !== null && decodeEntities(name[1]) === page;
+    return name !== null && he.decode(name[1], { isAttributeValue: true }) === page;
   });
   if (chosen === undefined && /^\d+$/.test(page)) chosen = diagrams[Number(page)];
   if (chosen === undefined) {
@@ -83,15 +84,6 @@ export function selectPage(xml, page) {
   }
   const open = xml.match(/<mxfile\b[^>]*>/);
   return `${open ? open[0] : "<mxfile>"}${chosen}</mxfile>`;
-}
-
-function decodeEntities(text) {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 async function waitForState(page, state, timeoutMs) {

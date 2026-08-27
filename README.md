@@ -192,7 +192,8 @@ node src/cli.js doctor
 npm test
 ```
 
-Renders a small diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
+Runs the argument-parsing suite (every verb's flags, positionals and refusals), then
+renders a small diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
 Each run also leaves its rendered exports in `test/` as gitignored artifacts named
 `smoke-<timestamp>-test-result.drawio.png` / `.drawio.svg`, so you can open the hello world
 the test checked and see the renderer working with your own eyes.

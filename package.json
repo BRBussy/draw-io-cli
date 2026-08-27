@@ -10,9 +10,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/smoke.mjs"
+    "test": "node test/args.mjs && node test/smoke.mjs"
   },
   "dependencies": {
-    "playwright": "1.62.1"
+    "commander": "14.0.3",
+    "fast-xml-parser": "5.11.1",
+    "he": "1.2.0",
+    "playwright": "1.62.1",
+    "pngjs": "7.0.0"
   }
 }
