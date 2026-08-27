@@ -56,6 +56,10 @@ export function parseCells(xml) {
     }
     const offM = body.match(/<mxPoint\b([^>]*)as="offset"[^>]*\/>/);
     const offset = offM ? (() => { const oa = attrs(offM[1] + 'as="offset"'); return { x: Number(oa.x ?? 0), y: Number(oa.y ?? 0) }; })() : null;
+    // A cell without an id cannot be addressed or parented to, and storing it
+    // under the key undefined would make absOrigin's parent walk cyclic (the
+    // root's missing parent attribute resolves to it).
+    if (a.id === undefined) continue;
     cells.set(a.id, { id: a.id, attrs: a, style: styleMap(a.style), geo, points, offset });
   }
   return cells;
@@ -63,7 +67,9 @@ export function parseCells(xml) {
 
 function absOrigin(cells, id) {
   let x = 0, y = 0, cur = cells.get(id);
-  while (cur) {
+  const seen = new Set();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur); // a parent cycle in a malformed model must not hang the walk
     if (cur.geo && cur.attrs.vertex === "1") { x += Number(cur.geo.x ?? 0); y += Number(cur.geo.y ?? 0); }
     cur = cells.get(cur.attrs.parent);
   }
@@ -80,6 +86,34 @@ function bbox(cells, id) {
     w: Number(c.geo.width ?? 0),
     h: Number(c.geo.height ?? 0),
   };
+}
+
+/**
+ * Model-space bounds over every vertex box and edge waypoint, remembering
+ * which cell sets each extreme so a calibration mismatch can name suspects.
+ * Edge labels never count: they have no committed geometry.
+ */
+export function modelBounds(cells) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const setBy = { minX: null, minY: null, maxX: null, maxY: null };
+  const take = (id, x1, y1, x2, y2) => {
+    if (x1 < minX) { minX = x1; setBy.minX = id; }
+    if (y1 < minY) { minY = y1; setBy.minY = id; }
+    if (x2 > maxX) { maxX = x2; setBy.maxX = id; }
+    if (y2 > maxY) { maxY = y2; setBy.maxY = id; }
+  };
+  for (const c of cells.values()) {
+    if (c.attrs.vertex === "1" && c.geo && !(cells.get(c.attrs.parent)?.attrs.edge === "1")) {
+      const b = bbox(cells, c.id);
+      take(c.id, b.x, b.y, b.x + b.w, b.y + b.h);
+    }
+    if (c.attrs.edge === "1") {
+      const eo = absOrigin(cells, c.attrs.parent);
+      for (const p of c.points) take(c.id, p.x + eo.x, p.y + eo.y, p.x + eo.x, p.y + eo.y);
+    }
+  }
+  if (!Number.isFinite(minX)) throw new Error("no geometry found to calibrate against");
+  return { minX, minY, maxX, maxY, setBy };
 }
 
 const SPECIMEN = 4; // units: an endpoint this small is a degenerate anchor point, not a shape
@@ -203,19 +237,54 @@ export function renderedLines(value) {
 }
 
 /**
+ * Estimates one line's rendered advance in model units. Calibrated against
+ * probe renders (Helvetica 12px: lowercase run 5.65 u/char, caps run 7.32,
+ * Menlo 7.07): uppercase and digits are wide, spaces and thin punctuation
+ * narrow, everything else lowercase-width. Within about 4% on mixed text.
+ */
+export function estimateAdvance(text, menlo) {
+  if (menlo) return text.length * 7.1;
+  let w = 0;
+  for (const ch of text) {
+    if (/[A-Z0-9@#%&]/.test(ch)) w += 7.9;
+    else if (/[ ]/.test(ch)) w += 3.4;
+    else if (/[.,:;'|!()[\]{}lijft-]/.test(ch)) w += 3.8;
+    else w += 6.2;
+  }
+  return w;
+}
+
+/**
  * Estimates a label's rendered box from its character counts: width from the
  * longest line's advance, height from the line count. An estimate, never
  * exact: callers must treat it as advisory.
  */
 export function estimateLabelBox(value) {
   const lines = renderedLines(value);
-  const chars = Math.max(...lines.map((l) => l.text.length), 1);
-  const perChar = /font-family:\s*Menlo/.test(decodeEntities(value)) ? 7.3 : 6.5;
+  const menlo = /font-family:\s*Menlo/.test(decodeEntities(value));
+  // Bold widens Helvetica by a few percent, so a line's advance gains 5% of
+  // its bold portion's width on top of the plain estimate.
+  const lineW = (l) => estimateAdvance(l.text, menlo) + (menlo ? 0 : 0.05 * estimateAdvance(l.bold, false));
+  const w = Math.max(...lines.map(lineW), 6);
   return {
-    w: chars * perChar + 4,
+    w: w + 4,
     h: Math.max(lines.length, 1) * 16,
     text: lines.map((l) => l.text).join(" ").slice(0, 30),
   };
+}
+
+/**
+ * Places a label's estimated box around its anchor the way mxGraph does:
+ * `align=left` puts the text's LEFT edge on the anchor, `align=right` its
+ * right edge, and only `align=center` (the default) centres it. Vertically,
+ * `verticalAlign=middle` centres the text on the anchor, while the default
+ * hangs it about 4 units below. Pixel-confirmed on a synthetic fixture.
+ */
+export function labelBoxFor(anchor, est, style = {}) {
+  const align = style.align ?? "center";
+  const x = align === "left" ? anchor.x : align === "right" ? anchor.x - est.w : anchor.x - est.w / 2;
+  const y = (style.verticalAlign ?? null) === "middle" ? anchor.y - est.h / 2 : anchor.y + 4;
+  return { x, y, w: est.w, h: est.h };
 }
 
 /**
@@ -234,6 +303,9 @@ export function editorJunk(value) {
   const html = decodeEntities(value ?? "");
   const found = [];
   for (const token of ["scrollbar-color", "light-dark("]) if (html.includes(token)) found.push(token);
+  // The editor wraps residue (an invisible line break, a re-coloured span) in
+  // <font> tags, which the inline-CSS matching below cannot see.
+  if (/<font\b[^>]*\scolor="/i.test(html)) found.push('<font color="...">');
   const scaffolded = /font-family:\s*Menlo/.test(html);
   for (const attr of html.matchAll(/style="([^"]*)"/g)) {
     for (const decl of attr[1].split(";")) {
@@ -279,8 +351,25 @@ export function lint(xml) {
       !(cells.get(c.attrs.parent)?.attrs.edge === "1"),
   );
 
+  // A parse that lost most of the file must fail loudly, never lint the
+  // remainder as if it were the diagram: a malformed geometry splice once
+  // loaded 2 of 145 cells and linted green.
+  const rawCount = (xml.match(/<mxCell[\s>/]/g) ?? []).length;
+  if (rawCount > 0 && cells.size < rawCount / 2) {
+    errors.push(
+      `parsed ${cells.size} of ${rawCount} mxCell elements: the model is malformed ` +
+        `(a broken geometry or points splice is the usual cause), fix the source before trusting any check`,
+    );
+  }
+
   for (const c of cells.values()) {
     if (POISON_IDS.has(c.id)) errors.push(`cell id "${c.id}" collides with a webapp builtin and kills rendering`);
+    // A remote image renders BLANK in the offline renderer and violates the
+    // icons rule, and the failure is invisible in the XML.
+    const image = c.style.image ?? "";
+    if (/^https?:\/\//.test(image)) {
+      errors.push(`cell ${c.id}: style references a remote image (${image.slice(0, 60)}...), embed the payload as a data: URI instead`);
+    }
   }
 
   const runs = []; // {edge, vertical, coord, lo, hi, colour}
@@ -294,7 +383,12 @@ export function lint(xml) {
     if (sw < 2) warnings.push(`edge ${e.id}: strokeWidth=${sw}, edges must be thicker than lane borders (>=2)`);
     if (res.nogeo) { warnings.push(`edge ${e.id}: terminal without geometry, cannot verify route`); continue; }
     if (res.unpinned) {
-      warnings.push(`edge ${e.id}: floating connection (pin exitX/exitY and entryX/entryY to make the route verifiable)`);
+      // A specimen edge joins two degenerate points, where exit and entry
+      // sides are geometrically meaningless, so pinning it adds noise to
+      // satisfy a check that cannot apply.
+      if (!isSpecimenEdge(cells, e)) {
+        warnings.push(`edge ${e.id}: floating connection (pin exitX/exitY and entryX/entryY to make the route verifiable)`);
+      }
       continue;
     }
     const pts = res.pts;
@@ -354,6 +448,32 @@ export function lint(xml) {
     }
   }
 
+  // A run passing hard alongside an unrelated shape reads as touching it.
+  // Advisory: a step circle deliberately hugs its own step's edge (same stroke
+  // colour), so same-colour furniture is exempt, as are the run's own
+  // endpoints. Crossing the shape outright is the error above, not this note.
+  const clearanceNotes = [];
+  for (const r of runs) {
+    const e = cells.get(r.edge);
+    for (const shape of shapes) {
+      if (shape.id === e.attrs.source || shape.id === e.attrs.target) continue;
+      if ((shape.style.strokeColor ?? "default") === r.colour) continue;
+      const box = bbox(cells, shape.id);
+      if (!box) continue;
+      const nearLo = r.vertical ? box.y : box.x;
+      const nearHi = r.vertical ? box.y + box.h : box.x + box.w;
+      if (r.hi < nearLo || r.lo > nearHi) continue; // no run alongside the shape
+      const acrossLo = r.vertical ? box.x : box.y;
+      const acrossHi = r.vertical ? box.x + box.w : box.y + box.h;
+      const d = r.coord < acrossLo ? acrossLo - r.coord : r.coord > acrossHi ? r.coord - acrossHi : 0;
+      if (d > 0 && d < CLEAR) {
+        clearanceNotes.push(
+          `edge ${r.edge}: run passes ${Math.round(d)}u from shape ${shape.id} ("${(shape.attrs.value ?? "").slice(0, 24)}"), minimum clearance ${CLEAR}u`,
+        );
+      }
+    }
+  }
+
   // Two edges of the same colour (the same step) must never properly cross each
   // other. A T-junction, an endpoint landing ON the other run, is the sanctioned
   // shared-trunk fan-out and is excluded by the strict-interior margins.
@@ -386,24 +506,48 @@ export function lint(xml) {
     // eyeball can tell that apart from a broken column.
     const voidBetween = Math.max(a.lo, b.lo) - Math.min(a.hi, b.hi);
     if (gap < STACK_OFFSET && voidBetween > 0 && voidBetween < STACK_GAP) {
+      // Disjoint runs far apart along their axis are the weaker signal: on
+      // real diagrams aligning them was still usually right, so the void is
+      // named rather than the hit silenced.
       stackNotes.push(
-        `edges ${a.edge} and ${b.edge}: stacked ${axis} runs ${gap} units out of column, align them, separate them, or confirm the offset is anchor-caused`,
+        `edges ${a.edge} and ${b.edge}: stacked ${axis} runs ${gap} units out of column ` +
+          `(disjoint spans, ${Math.round(voidBetween)}u void between them), align them, separate them, or confirm the offset is anchor-caused`,
       );
     }
   }
 
   // Advisory only: a monospace code cell much wider than its text suggests the box
   // is not hugging its content. Char-count estimate, so these never fail a run.
-  const notes = [...stackNotes];
+  const notes = [...stackNotes, ...clearanceNotes];
   for (const c of cells.values()) {
-    if (c.attrs.vertex !== "1" || !c.geo) continue;
-    const value = c.attrs.value ?? "";
-    if (!/font-family:\s*Menlo/.test(value)) continue;
-    const text = value.replace(/&lt;[^&]*?&gt;|<[^>]*>/g, "").replace(/&[a-z]+;|&#\d+;/g, "x");
-    const est = text.length * 7.3 + 8;
+    if (c.attrs.vertex !== "1" || !c.geo || !c.attrs.value) continue;
+    if (cells.get(c.attrs.parent)?.attrs.edge === "1") continue; // riding labels size themselves
+    // An icon's caption renders OUTSIDE its box (verticalLabelPosition), so
+    // the box width says nothing about the caption's fit.
+    if (c.style.verticalLabelPosition !== undefined || c.style.image !== undefined) continue;
     const width = Number(c.geo.width ?? 0);
-    if (width > est + 40) {
-      notes.push(`cell ${c.id}: box ${width}u wide for ~${Math.round(est)}u of text, likely not hugging its content`);
+    if (width <= 0) continue;
+    const menlo = /font-family:\s*Menlo/.test(decodeEntities(c.attrs.value));
+    const lines = renderedLines(c.attrs.value);
+    if (lines.length === 0) continue;
+    if (menlo) {
+      const est = Math.max(...lines.map((l) => estimateAdvance(l.text, true))) + 8;
+      if (width > est + 40) {
+        notes.push(`cell ${c.id}: box ${width}u wide for ~${Math.round(est)}u of text, likely not hugging its content`);
+      }
+    }
+    // The other direction: an unbreakable token wider than the box overflows
+    // and paints over neighbours, invisible in the XML. Wrapping cannot save
+    // it, since a token has no break point. Estimate tier, so a note.
+    const longestToken = lines
+      .flatMap((l) => l.text.split(/\s+/))
+      .reduce((a, t) => (estimateAdvance(t, menlo) > estimateAdvance(a, menlo) ? t : a), "");
+    const tokenW = estimateAdvance(longestToken, menlo);
+    if (tokenW > width * 1.1 + 6) {
+      notes.push(
+        `cell ${c.id}: token "${longestToken.slice(0, 30)}" is ~${Math.round(tokenW)}u wide in a ${width}u box, ` +
+          `likely overflowing it (an unbreakable token ignores wrapping)`,
+      );
     }
   }
   // Advisory only: edge labels have no committed geometry, so their boxes are
@@ -422,8 +566,9 @@ export function lint(xml) {
     const anchor = labelAnchor(pts, c.geo.x, c.offset);
     if (!anchor) continue;
     const est = estimateLabelBox(c.attrs.value);
-    labelBoxes.push({ id: c.id, edge: parentEdge.id, x: anchor.x - est.w / 2, y: anchor.y - est.h / 2,
-      w: est.w, h: est.h, text: est.text, align: c.style.align, specimen });
+    const box = labelBoxFor(anchor, est, c.style);
+    labelBoxes.push({ id: c.id, edge: parentEdge.id, x: box.x, y: box.y,
+      w: box.w, h: box.h, text: est.text, align: c.style.align, specimen });
   }
   const PEN = 2; // units a run must penetrate an estimated box before it is worth a note
   for (const lb of labelBoxes) {
@@ -438,13 +583,29 @@ export function lint(xml) {
       }
     }
   }
+  // Label-over-label: boxes are estimates (about 5% out), so a marginal graze
+  // stays advisory, while an overlap that survives shrinking both boxes by 20%
+  // per side is real beyond the estimate's error and fails the run.
+  const shrink = (b) => ({ x: b.x + b.w * 0.2, y: b.y + b.h * 0.2, w: b.w * 0.6, h: b.h * 0.6 });
   for (let i = 0; i < labelBoxes.length; i += 1) for (let j = i + 1; j < labelBoxes.length; j += 1) {
     const a = labelBoxes[i], b = labelBoxes[j];
     if (a.x + PEN < b.x + b.w && b.x + PEN < a.x + a.w && a.y + PEN < b.y + b.h && b.y + PEN < a.y + a.h) {
-      notes.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): estimated boxes overlap, likely colliding text`);
+      const sa = shrink(a), sb = shrink(b);
+      const certain = sa.x < sb.x + sb.w && sb.x < sa.x + sa.w && sa.y < sb.y + sb.h && sb.y < sa.y + sa.h;
+      if (certain) {
+        errors.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): text boxes overlap well beyond the estimate's error, colliding text`);
+      } else {
+        notes.push(`labels ${a.id} ("${a.text}") and ${b.id} ("${b.text}"): estimated boxes graze, check the render for colliding text`);
+      }
     }
   }
-  // Golden rule, advisory: a riding label either straddles its own edge's
+
+  // The exporter extends its bounds to include edge labels (a rendered pair's
+  // residual proves it: folding label boxes into the predicted bounds lands
+  // within a few pixels), so a label past the geometry bounds does NOT clip.
+  // No check is needed; measure's calibration names such extensions.
+  // Golden rule, ERROR tier (promoted once every committed diagram met the
+  // label rules): a riding label either straddles its own edge's
   // nearest run through its centre band (the knockout breaking the line behind
   // the text) or sits clear alongside, the run on its LEFT (vertical) or its
   // top or bottom (horizontal). A vertical run on the label's RIGHT is always a
@@ -478,12 +639,12 @@ export function lint(xml) {
     let crossing = centred;
     if (!centred) {
       if (nearest.vertical && off > 0 && Math.abs(off) >= half) {
-        notes.push(`${where}: its own vertical run sits ${clearance}u clear on the label's RIGHT, a run alongside may only sit on the label's left`);
+        errors.push(`${where}: its own vertical run sits ${clearance}u clear on the label's RIGHT, a run alongside may only sit on the label's left`);
       } else if (overlaps && Math.abs(off) < half) {
         crossing = true;
-        notes.push(`${where}: its own ${axis} run cuts the box ${Math.round(Math.abs(off))}u off the ${nearest.vertical ? "horizontal" : "vertical"} midpoint (tolerance ${Math.round(tol)}u), straddle the run centred or slide the label clear alongside it`);
+        errors.push(`${where}: its own ${axis} run cuts the box ${Math.round(Math.abs(off))}u off the ${nearest.vertical ? "horizontal" : "vertical"} midpoint (tolerance ${Math.round(tol)}u), straddle the run centred or slide the label clear alongside it`);
       } else if (!overlaps || clearance > ALONGSIDE) {
-        notes.push(`${where}: its own nearest run is ${Math.round(distToRun(centre, nearest))}u from the label centre, too far to ride or to sit alongside (maximum ${ALONGSIDE}u clear)`);
+        errors.push(`${where}: its own nearest run is ${Math.round(distToRun(centre, nearest))}u from the label centre, too far to ride or to sit alongside (maximum ${ALONGSIDE}u clear)`);
       }
     }
     if (lb.specimen) continue;
@@ -491,11 +652,11 @@ export function lint(xml) {
     const wanted = crossing && !nearest.vertical ? "left" : "center";
     const align = lb.align ?? "center"; // the webapp's default when the style omits it
     if (align !== wanted) {
-      notes.push(`${where}: align=${lb.align ?? "center (default, no token)"} with its own ${axis} run ${crossing ? "crossing it" : "alongside"}, the crossing axis wants align=${wanted}`);
+      errors.push(`${where}: align=${lb.align ?? "center (default, no token)"} with its own ${axis} run ${crossing ? "crossing it" : "alongside"}, the crossing axis wants align=${wanted}`);
     }
   }
 
-  // Golden rule, advisory: an edge label's first rendered line is the acting
+  // Golden rule, ERROR tier: an edge label's first rendered line is the acting
   // party, bold and colon-terminated, and its body opens with a capital. A
   // legend caption on a specimen edge names a style, has no acting party, and
   // is exempt.
@@ -514,7 +675,7 @@ export function lint(xml) {
     if (body === "") faults.push("it has no body under its first line");
     else if (!/^\p{Lu}/u.test(body)) faults.push(`its body "${body.slice(0, 24)}" does not start with a capital letter`);
     if (faults.length > 0) {
-      notes.push(`label ${cell.id} ("${whole.slice(0, 30)}") on edge ${edge}: ${faults.join(", and ")}. An edge label reads as a bold colon-terminated actor over a capitalised body, and only a whole-text call expression (identifier immediately followed by parentheses) is exempt as a code label`);
+      errors.push(`label ${cell.id} ("${whole.slice(0, 30)}") on edge ${edge}: ${faults.join(", and ")}. An edge label reads as a bold colon-terminated actor over a capitalised body, and only a whole-text call expression (identifier immediately followed by parentheses) is exempt as a code label`);
     }
   }
 

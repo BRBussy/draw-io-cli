@@ -3,7 +3,9 @@ import { elideImagePayloads } from "./extract.js";
 
 function absOrigin(cells, id) {
   let x = 0, y = 0, cur = cells.get(id);
-  while (cur) {
+  const seen = new Set();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur); // a parent cycle in a malformed model must not hang the walk
     if (cur.geo && cur.attrs.vertex === "1") { x += Number(cur.geo.x ?? 0); y += Number(cur.geo.y ?? 0); }
     cur = cells.get(cur.attrs.parent);
   }
@@ -122,6 +124,19 @@ function elementEnd(xml, open, name) {
  * @throws When no element carries the id, or when more than one does.
  */
 export function cellXml(xml, id, { elideImages = false } = {}) {
+  const { open, end } = cellSlice(xml, id);
+  const slice = xml.slice(open, end);
+  return elideImages ? elideImagePayloads(slice) : slice;
+}
+
+/**
+ * Locates the single id-bearing element carrying `id` in the file's own text,
+ * returning its byte range {open, end, name}. The locating half of
+ * {@link cellXml}, exported so in-place surgery can splice the same bytes.
+ *
+ * @throws When no element carries the id, or when more than one does.
+ */
+export function cellSlice(xml, id) {
   const lineOf = (index) => xml.slice(0, index).split("\n").length;
   const hits = [];
   for (const name of ID_BEARING) {
@@ -143,8 +158,7 @@ export function cellXml(xml, id, { elideImages = false } = {}) {
     );
   }
   const hit = hits[0];
-  const slice = xml.slice(hit.open, elementEnd(xml, hit.open, hit.name));
-  return elideImages ? elideImagePayloads(slice) : slice;
+  return { open: hit.open, end: elementEnd(xml, hit.open, hit.name), name: hit.name };
 }
 
 /**

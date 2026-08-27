@@ -164,8 +164,12 @@ try {
 
   // measure: an edge label resolves its anchor on the parent edge's pinned
   // polyline and reports ink inside its estimated box.
-  const labelMeasure = run(["measure", join(dir, "hello.drawio.png"), "--cell", "4l"]).stdout;
-  assert.match(labelMeasure, /label 4l on edge 4: .*anchor \(212,62\)/, "measure must anchor the edge label on its polyline");
+  // hello.drawio.png was rendered at the built-in defaults BEFORE the scale-1
+  // config landed in this directory, so the true scale must be stated: measure
+  // now refuses a config/PNG scale mismatch instead of publishing bogus numbers.
+  runExpectingFailure(["measure", join(dir, "hello.drawio.png"), "--cell", "4l"], "appears rendered at scale");
+  const labelMeasure = run(["measure", join(dir, "hello.drawio.png"), "--cell", "4l", "--scale", "3", "--border", "10"]).stdout;
+  assert.match(labelMeasure, /label 4l on edge 4 \(text box\): .*anchor \(212,62\)/, "measure must anchor the edge label on its polyline");
   assert.match(labelMeasure, /ink \d/, "measure must find the label's text ink");
 
   // The webapp silently drops the whole model when a cell id collides with one of
@@ -250,7 +254,7 @@ try {
     <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="40" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="100" y="240" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
-    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
+    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};verticalAlign=middle;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
   </root></mxGraphModel></diagram></mxfile>`;
   // Horizontal run at y=170 between x=160 and x=360, the label riding it.
   const ridingHorizontal = (align, value = ACTOR_LABEL) => `<mxfile><diagram id="p" name="p"><mxGraphModel><root>
@@ -258,11 +262,14 @@ try {
     <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="140" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="360" y="140" width="120" height="60" as="geometry" /></mxCell>
     <mxCell id="e" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
-    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
+    <mxCell id="el" value="${value}" style="edgeLabel;html=1;align=${align};verticalAlign=middle;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry" /></mxCell>
   </root></mxGraphModel></diagram></mxfile>`;
   const lintNotes = (name, xml) => {
+    // Planted golden-rule violations now fail the run by design (error tier),
+    // so this helper collects stderr without asserting the exit code.
     writeFileSync(join(dir, `${name}.drawio`), xml);
-    return run(["lint", join(dir, `${name}.drawio`), "--strict"]).stderr;
+    const result = spawnSync(process.execPath, [cli, "lint", join(dir, `${name}.drawio`), "--strict"], { encoding: "utf8" });
+    return result.stderr;
   };
 
   // Run-through-centre: straddling the run centred is the sanctioned seat, and
@@ -331,7 +338,7 @@ try {
     <mxCell id="src" value="" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="100" width="${endpointSize}" height="${endpointSize}" as="geometry" /></mxCell>
     <mxCell id="tgt" value="" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="200" y="300" width="${endpointSize}" height="${endpointSize}" as="geometry" /></mxCell>
     <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="src" target="tgt"><mxGeometry relative="1" as="geometry" /></mxCell>
-    <mxCell id="el" value="request phase" style="edgeLabel;html=1;align=left;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
+    <mxCell id="el" value="request phase" style="edgeLabel;html=1;align=left;verticalAlign=middle;" vertex="1" connectable="0" parent="e"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="${offsetX}" y="0" as="offset" /></mxGeometry></mxCell>
   </root></mxGraphModel></diagram></mxfile>`;
   const specimenSeated = lintNotes("swatch-specimen", swatch(1, 0));
   assert.ok(!specimenSeated.includes("wants align"), `a legend caption on a specimen edge must be exempt from alignment, got:\n${specimenSeated}`);
@@ -342,7 +349,9 @@ try {
     `an all-specimen diagram must declare the exempted checks vacuous, got:\n${specimenSeated}`,
   );
   // Seating still applies to a specimen: its run may not sit on the caption's right.
-  const specimenCrooked = lintNotes("swatch-crooked", swatch(1, -60));
+  // align=left anchors the text's LEFT edge, so the caption must slide a full
+  // estimated width past the run before the run lands on its right.
+  const specimenCrooked = lintNotes("swatch-crooked", swatch(1, -100));
   assert.ok(specimenCrooked.includes("clear on the label's RIGHT"), `a crooked legend caption must still be flagged, got:\n${specimenCrooked}`);
   // The control: real endpoints make the same label a description again.
   const swatchControl = lintNotes("swatch-control", swatch(60, 0));
@@ -384,16 +393,19 @@ try {
     <mxCell id="d" value="D" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="420" y="${labelY}" width="60" height="40" as="geometry" /></mxCell>
     <mxCell id="e1" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry" /></mxCell>
     <mxCell id="e2" style="html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="c" target="d"><mxGeometry relative="1" as="geometry" /></mxCell>
-    <mxCell id="e2l" value="a fairly long riding label" style="edgeLabel;html=1;" vertex="1" connectable="0" parent="e2"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="0" y="OFFSET" as="offset" /></mxGeometry></mxCell>
+    <mxCell id="e2l" value="a fairly long riding label" style="edgeLabel;html=1;verticalAlign=middle;" vertex="1" connectable="0" parent="e2"><mxGeometry x="0" relative="1" as="geometry"><mxPoint x="0" y="OFFSET" as="offset" /></mxGeometry></mxCell>
   </root></mxGraphModel></diagram></mxfile>`;
   // Label pushed up from its own edge (y=labelY+20) onto e1's run at y=40.
   const collideY = 70; // e2 run at y=90, offset -50 puts the label box across y=40
   writeFileSync(join(dir, "labelhit.drawio"), labelled(collideY).replace('y="OFFSET"', 'y="-50"'));
-  const hit = run(["lint", join(dir, "labelhit.drawio"), "--strict"]);
+  // The planted label is deliberately slid and unformatted, so strict lint
+  // fails by design under the error-tier golden rules: collect stderr without
+  // asserting the exit code.
+  const hit = spawnSync(process.execPath, [cli, "lint", join(dir, "labelhit.drawio"), "--strict"], { encoding: "utf8" });
   assert.ok(hit.stderr.includes("estimated box of label"), `expected a label-strike note, got:\n${hit.stderr}`);
   // The same label left in place on its own edge produces no label note.
   writeFileSync(join(dir, "labelclean.drawio"), labelled(300).replace('y="OFFSET"', 'y="0"'));
-  const clean = run(["lint", join(dir, "labelclean.drawio"), "--strict"]);
+  const clean = spawnSync(process.execPath, [cli, "lint", join(dir, "labelclean.drawio"), "--strict"], { encoding: "utf8" });
   assert.ok(!clean.stderr.includes("estimated box"), `clean label wrongly flagged:\n${clean.stderr}`);
 
   // measure: a rendered box with known text reports its pixel-true padding.
@@ -428,14 +440,14 @@ try {
     `delta ${round1(inkW + 16 - 200)}x${round1(inkH + 12 - 60)}u`;
   assert.ok(fitOut.includes(expected), `fit line should read "${expected}", got:\n${fitOut}`);
   // A fit id needs no --cell of its own, and an edge label has no declared box to fit.
-  const fitLabel = run(["measure", join(dir, "hello.drawio.png"), "--fit", "4l"]).stdout;
+  const fitLabel = run(["measure", join(dir, "hello.drawio.png"), "--fit", "4l", "--scale", "3", "--border", "10"]).stdout;
   assert.match(fitLabel, /fit 4l: an edge label declares no box/, "a fit on an edge label must say there is nothing to fit");
 
   // measure --affine: the model-to-pixel mapping written out, per axis and both
   // ways. The numbers are re-derived here from the calibration line of the same
   // run, so an affine drifting from the calibration it claims to publish fails.
   const affineOut = run(["measure", join(dir, "measured.drawio.png"), "--affine", "--scale", "3", "--border", "10"]).stdout;
-  const cal = affineOut.match(/model=\((-?[\d.]+),(-?[\d.]+)\).* residual=(-?\d+),(-?\d+)px/);
+  const cal = affineOut.match(/content=\((-?[\d.]+),(-?[\d.]+)\).* residual=(-?\d+),(-?\d+)px/);
   assert.ok(cal, `--affine must still print the calibration it derives from:\n${affineOut}`);
   const [minX, minY, resW, resH] = cal.slice(1, 5).map(Number);
   const offX = 10 * 3 + Math.trunc(resW / 2);
@@ -452,10 +464,9 @@ try {
   assert.ok(!affineOut.includes("cell "), `--affine alone must measure nothing, got:\n${affineOut}`);
   runExpectingFailure(["measure", join(dir, "measured.drawio.png")], "measure needs at least one");
 
-  // A residual attributed to named label overhangs and no wider than the render
-  // border's own pixel slack is a known, harmless mismatch: a one-line note, not
-  // the warning an agent learns to grep away. The same PNG read against a border
-  // too small to absorb it warns as before.
+  // Labels are folded into the calibration's content bounds, so a label
+  // overhanging the geometry no longer leaves a residual: the calibration
+  // names the extension on its own line and the residual stays near zero.
   const overhanging = `<mxfile><diagram id="oh" name="oh"><mxGraphModel><root>
     <mxCell id="0" /><mxCell id="1" parent="0" />
     <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry" /></mxCell>
@@ -467,23 +478,40 @@ try {
   writeFileSync(ohSource, overhanging);
   run(["render", ohSource, "--png", "--scale", "3", "--border", "25"]);
   const ohPng = join(dir, "overhang.drawio.png");
-  const demoted = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "25"]).stdout;
-  assert.match(demoted, /calibration: note residual -?\d+,-?\d+px is within the render border \(25u = 75px\) and attributed\. Estimated edge-label overhangs: el /, `an attributed residual inside the border must demote to a note, got:\n${demoted}`);
+  const folded = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "25"]).stdout;
+  assert.ok(!folded.includes("WARNING"), `label bounds folded into the calibration must leave no warning, got:\n${folded}`);
+  // A residual whose bound-setting cells are EDGES demotes to a note inside
+  // the border: the webapp genuinely pads an edge's bounds beyond its
+  // declared polyline (about 17u per side here), so making one edge set
+  // every bound produces the residual all by itself.
+  const edgeBound = `<mxfile><diagram id="eb" name="eb"><mxGraphModel><root>
+    <mxCell id="0" /><mxCell id="1" parent="0" />
+    <mxCell id="a" value="A" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="b" value="B" style="rounded=0;html=1;" vertex="1" parent="1"><mxGeometry x="300" y="40" width="120" height="60" as="geometry" /></mxCell>
+    <mxCell id="e" style="html=1;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="a" target="b"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="20" y="20" /><mxPoint x="440" y="20" /><mxPoint x="440" y="180" /><mxPoint x="20" y="180" /></Array></mxGeometry></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+  const ebSource = join(dir, "edgebound.drawio");
+  writeFileSync(ebSource, edgeBound);
+  run(["render", ebSource, "--png", "--scale", "3", "--border", "25"]);
+  const ebPng = join(dir, "edgebound.drawio.png");
+  const demoted = run(["measure", ebPng, "--cell", "a", "--scale", "3", "--border", "25"]).stdout;
+  assert.match(demoted, /calibration: note residual -?\d+,-?\d+px is within the render border .* attributed to bound-setting edges/, `an edge-attributed residual inside the border must demote to a note, got:\n${demoted}`);
   assert.ok(!demoted.includes("WARNING"), `a demoted residual must not also warn, got:\n${demoted}`);
-  // Same pixels, a border too small to absorb the same overhang: still a warning.
-  const loud = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "10"]).stdout;
-  assert.ok(loud.includes("calibration: WARNING") && loud.includes("overhangs: el "), `a residual past the border must stay a warning, got:\n${loud}`);
-  // Small but unattributed (no edge labels at all, so the suspects are a guess):
-  // never demoted, since nothing has explained it.
+  // Small but unattributed (the bound-setters are vertices, nothing explains
+  // the shift): never demoted, since nothing has explained it.
   const vague = run(["measure", join(dir, "measured.drawio.png"), "--cell", "padded", "--scale", "3", "--border", "12"]).stdout;
   assert.ok(vague.includes("calibration: WARNING") && vague.includes("Bounds are set by"), `an unattributed residual must stay a warning, got:\n${vague}`);
   // --quiet-calibration drops the line and the note, and keeps the warning: it
   // is the error bar on every number under it.
-  const quiet = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "25", "--quiet-calibration"]).stdout;
+  const quiet = run(["measure", ebPng, "--cell", "a", "--scale", "3", "--border", "25", "--quiet-calibration"]).stdout;
   assert.ok(!quiet.includes("calibration:"), `--quiet-calibration must drop the calibration lines, got:\n${quiet}`);
   assert.ok(quiet.includes("cell a: box"), "--quiet-calibration must keep the measurements");
   const quietLoud = run(["measure", ohPng, "--cell", "a", "--scale", "3", "--border", "10", "--quiet-calibration"]).stdout;
   assert.ok(quietLoud.includes("calibration: WARNING"), `--quiet-calibration must never hide a warning, got:\n${quietLoud}`);
+  // --affine is refused while a live WARNING stands: an unexplained shift
+  // would be baked into the offsets it publishes.
+  const refused = run(["measure", ohPng, "--affine", "--scale", "3", "--border", "10"]).stdout;
+  assert.ok(refused.includes("affine: refused while a live calibration WARNING"), `--affine must refuse under a live warning, got:\n${refused}`);
 
   console.log("smoke test passed");
 } finally {

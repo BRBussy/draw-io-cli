@@ -7,6 +7,8 @@ import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
 import { lint } from "./lint.js";
 import { cellsReport, cellXml, stylesReport } from "./cells.js";
+import { setGeometry, setWaypoints, setLabelOffset, verifyEdit } from "./edit.js";
+import { diffCells } from "./diff.js";
 
 const USAGE = `Usage:
   drawio-cli extract <input> [-o <output>] [--force] [--elide-images] [--decode-entities]
@@ -15,7 +17,11 @@ const USAGE = `Usage:
   drawio-cli cells <input> [--full]
   drawio-cli cells <input> --xml <id> [--elide-images]
   drawio-cli styles <input>
-  drawio-cli measure <input.drawio.png> [--cell <id> ...] [--fit <id> ...] [--affine] [--quiet-calibration] [--scale <n>] [--border <n>]
+  drawio-cli measure <input.drawio.png> [--cell <id> ...] [--fit <id> ...] [--gaps <id> ...] [--affine] [--quiet-calibration] [--scale <n>] [--border <n>]
+  drawio-cli set-geometry <input.drawio> <id> [--x <n>] [--y <n>] [--width <n>] [--height <n>]
+  drawio-cli set-waypoints <input.drawio> <id> "x1,y1 x2,y2 ..."   (an empty string clears them)
+  drawio-cli set-label-offset <input.drawio> <id> <dx> <dy>
+  drawio-cli diff-cells <a> <b>
   drawio-cli doctor`;
 
 function fail(message) {
@@ -65,6 +71,17 @@ function runExtract(args) {
   }
   if (input === null) fail(USAGE);
   let xml = readModel(input);
+  // Name what was extracted, so a wrong input file (a scratch copy a sibling
+  // process overwrote, a stale path) is visible immediately. A single-page
+  // file whose page name disagrees with its basename gets a louder line.
+  const pages = [...xml.matchAll(/<diagram\b[^>]*?\sname="([^"]*)"/g)].map((m) => m[1]);
+  if (pages.length > 0) {
+    console.error(`extract: diagram name(s): ${pages.join(", ")}`);
+    const base = input.replace(/\.(png|svg)$/i, "").replace(/\.drawio$/i, "").split("/").pop();
+    if (pages.length === 1 && pages[0] !== base) {
+      console.error(`extract: note page name "${pages[0]}" differs from the file's basename "${base}": confirm this is the file you meant`);
+    }
+  }
   if (elide) xml = elideImagePayloads(xml);
   if (decode) xml = decodeNumericEntities(xml);
   if (elide && output === null) {
@@ -94,13 +111,23 @@ function runMeasure(args) {
   let quietCalibration = false;
   const cellIds = [];
   const fitIds = [];
+  const gapIds = [];
+  // A flag mistaken for an id measures garbage silently, so an id argument
+  // may never begin with a dash.
+  const idArg = (flag, value) => {
+    if (value === undefined || value.startsWith("-")) fail(`${flag} requires a cell id (got ${value ?? "nothing"})`);
+    return value;
+  };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--cell") {
-      cellIds.push(args[i + 1] ?? fail("--cell requires a cell id"));
+      cellIds.push(idArg("--cell", args[i + 1]));
       i += 1;
     } else if (arg === "--fit") {
-      fitIds.push(args[i + 1] ?? fail("--fit requires a cell id"));
+      fitIds.push(idArg("--fit", args[i + 1]));
+      i += 1;
+    } else if (arg === "--gaps") {
+      gapIds.push(idArg("--gaps", args[i + 1]));
       i += 1;
     } else if (arg === "--affine") affine = true;
     else if (arg === "--quiet-calibration") quietCalibration = true;
@@ -117,8 +144,8 @@ function runMeasure(args) {
   // A fit is a measurement plus a sizing verdict, so its cell is measured
   // whether or not --cell also names it.
   for (const id of fitIds) if (!cellIds.includes(id)) cellIds.push(id);
-  if (cellIds.length === 0 && !affine) {
-    fail("measure needs at least one --cell <id> or --fit <id>, or --affine for the mapping alone");
+  if (cellIds.length === 0 && gapIds.length === 0 && !affine) {
+    fail("measure needs at least one --cell <id>, --fit <id> or --gaps <id>, or --affine for the mapping alone");
   }
   const config = loadRenderConfig(input);
   if (config.path !== null && (scale === null || border === null)) console.error(`config: ${config.path}`);
@@ -126,7 +153,7 @@ function runMeasure(args) {
   border = border ?? config.border ?? 10;
   const raw = readFileSync(input);
   const xml = extractMxfile(raw);
-  console.log(measure(raw, xml, { cellIds, fitIds, affine, scale, border, quietCalibration }));
+  console.log(measure(raw, xml, { cellIds, fitIds, gapIds, affine, scale, border, quietCalibration }));
 }
 
 /** Strips render input suffixes down to the base name shared by all outputs. */
@@ -258,9 +285,77 @@ function runLint(args) {
   if (failing > 0) process.exit(1);
 }
 
+/** Reads a .drawio for in-place editing, refusing rendered inputs. */
+function readEditable(input) {
+  if (/\.(png|svg)$/i.test(input)) {
+    fail("editing verbs write the .drawio source in place: edit the source, then re-render the pair");
+  }
+  return readFileSync(input, "utf8");
+}
+
+function finishEdit(input, edited, id, expect) {
+  verifyEdit(edited, id, expect);
+  writeOutput(input, edited);
+  console.error("edited in place: re-render the pair before committing");
+}
+
+function runSetGeometry(args) {
+  const [input, id, ...rest] = args;
+  if (!input || !id || id.startsWith("-")) fail(USAGE);
+  const geo = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const key = { "--x": "x", "--y": "y", "--width": "width", "--height": "height" }[rest[i]];
+    if (!key) fail(`unexpected argument: ${rest[i]}`);
+    const value = Number(rest[i + 1]);
+    if (!Number.isFinite(value)) fail(`${rest[i]} requires a number`);
+    geo[key] = value;
+    i += 1;
+  }
+  if (Object.keys(geo).length === 0) fail("set-geometry needs at least one of --x/--y/--width/--height");
+  const edited = setGeometry(readEditable(input), id, geo);
+  finishEdit(input, edited, id, { geo });
+}
+
+function runSetWaypoints(args) {
+  const [input, id, list, ...rest] = args;
+  if (!input || !id || id.startsWith("-") || list === undefined) fail(USAGE);
+  if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`);
+  const points = list.trim() === "" ? [] : list.trim().split(/\s+/).map((pair) => {
+    const m = /^(-?[\d.]+),(-?[\d.]+)$/.exec(pair);
+    if (!m) fail(`waypoint "${pair}" is not x,y`);
+    return { x: Number(m[1]), y: Number(m[2]) };
+  });
+  const edited = setWaypoints(readEditable(input), id, points);
+  finishEdit(input, edited, id, { points });
+}
+
+function runSetLabelOffset(args) {
+  const [input, id, dxRaw, dyRaw, ...rest] = args;
+  if (!input || !id || id.startsWith("-") || dxRaw === undefined || dyRaw === undefined) fail(USAGE);
+  if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`);
+  const dx = Number(dxRaw), dy = Number(dyRaw);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) fail("set-label-offset requires numeric dx and dy");
+  const edited = setLabelOffset(readEditable(input), id, dx, dy);
+  finishEdit(input, edited, id, { offset: { x: dx, y: dy } });
+}
+
+function runDiffCells(args) {
+  const [a, b, ...rest] = args;
+  if (!a || !b) fail(USAGE);
+  if (rest.length > 0) fail(`unexpected argument: ${rest[0]}`);
+  const lines = diffCells(readModel(a), readModel(b));
+  for (const line of lines) console.log(line);
+  console.log(lines.length === 0 ? "cells match (ids, values, styles)" : `${lines.length} difference line(s)`);
+  if (lines.length > 0) process.exit(1);
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "extract") runExtract(args);
+  else if (command === "set-geometry") runSetGeometry(args);
+  else if (command === "set-waypoints") runSetWaypoints(args);
+  else if (command === "set-label-offset") runSetLabelOffset(args);
+  else if (command === "diff-cells") runDiffCells(args);
   else if (command === "lint") runLint(args);
   else if (command === "cells") runCells(args);
   else if (command === "styles") {
