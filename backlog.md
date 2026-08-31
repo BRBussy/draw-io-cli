@@ -64,7 +64,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
   - test: run `npm test` and see the lint-violations output. Then break one lint check
     deliberately, watch `npm test` fail, and restore it.
 
-- [ ] Lazy-import playwright so static verbs work without it
+- [x] Lazy-import playwright so static verbs work without it
   - category: bug (availability), reproduced
   - description: src/cli.js statically imports render.js and doctor.js, which import
     playwright at module top, so even `lint` dies with a raw ERR_MODULE_NOT_FOUND when

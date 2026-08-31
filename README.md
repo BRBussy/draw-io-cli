@@ -197,12 +197,17 @@ node src/cli.js styles diagram.drawio
 
 ### doctor
 
-Checks the render path: the extension webapp and the playwright Chromium build. Exits 0
-when both are found, otherwise names the missing piece and its fix.
+Checks the render path: the extension webapp, the playwright package and its Chromium
+build. Exits 0 when all are found, otherwise names the missing piece and its fix.
 
 ```
 node src/cli.js doctor
 ```
+
+Playwright is loaded only when a render actually starts, so every other verb (`extract`,
+`lint`, `cells`, `styles`, `measure`, `diff-cells` and the editing verbs) works on a
+checkout that has never installed it. Without it `doctor` names the missing package and
+`render` fails with the same fix.
 
 ## Test
 
@@ -213,7 +218,8 @@ npm test
 Runs three suites, cheapest first. The lint-violations suite (`test/lint-violations.mjs`)
 plants a violation for every lint check and asserts it fires, with a clean control beside
 it that must stay quiet. The argument-parsing suite (`test/args.mjs`) covers every verb's
-flags, positionals and refusals. The smoke suite (`test/smoke.mjs`) renders a small
+flags, positionals and refusals, and re-runs the static verbs with playwright made
+unresolvable to prove they never need it. The smoke suite (`test/smoke.mjs`) renders a small
 diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
 Each run also leaves its rendered exports in `test/` as gitignored artifacts named
 `smoke-<timestamp>-test-result.drawio.png` / `.drawio.svg`, so you can open the hello world

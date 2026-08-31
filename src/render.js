@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, normalize, extname } from "node:path";
-import { chromium } from "playwright";
 import he from "he";
 import { BOOTSTRAP_HTML, HOST_HTML, locateWebapp } from "./webapp.js";
+import { loadChromium, PLAYWRIGHT_INSTALL_FIX } from "./playwright.js";
 
 const MIME_TYPES = {
   ".html": "text/html",
@@ -129,14 +129,20 @@ async function blockEgress(context, origin) {
  * Renders mxfile XML with the extension's bundled draw.io webapp under
  * headless Chromium and returns the requested exports. formats is an array
  * of "xmlpng" and "xmlsvg" entries. Resolves to a map from format to Buffer
- * (PNG bytes, or UTF-8 SVG bytes). Throws when the webapp is missing or
- * an export does not complete.
+ * (PNG bytes, or UTF-8 SVG bytes). Throws when the webapp is missing, when
+ * playwright is missing, or when an export does not complete.
  */
 export async function renderDiagram(xml, { formats, scale = 3, border = 10 }) {
   const webappDir = locateWebapp();
   if (webappDir === null) {
     throw new Error(
       "draw.io webapp not found: install the hediet.vscode-drawio VS Code extension",
+    );
+  }
+  const chromium = await loadChromium();
+  if (chromium === null) {
+    throw new Error(
+      `playwright not installed, so nothing can be rendered: ${PLAYWRIGHT_INSTALL_FIX}, then run drawio-cli doctor to check the render path`,
     );
   }
   const server = await serveWebapp(webappDir);

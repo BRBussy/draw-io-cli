@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileS
 import { deflateRawSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Argument parsing, verb by verb: which flags each verb takes, which
 // invocations it must refuse, and which stream each answer leaves on. One
@@ -66,6 +66,18 @@ let passed = 0;
 
 function invoke(args) {
   return spawnSync(process.execPath, [cli, ...args], { encoding: "utf8" });
+}
+
+/**
+ * Runs the CLI with the playwright package made unresolvable, the state of a
+ * checkout that never installed it. The resolve hook stands in for renaming
+ * the directory away, so the suite never mutates node_modules.
+ */
+function invokeWithoutPlaywright(args) {
+  const hider = join(testDir, "hide-playwright.mjs");
+  return spawnSync(process.execPath, ["--import", pathToFileURL(hider).href, cli, ...args], {
+    encoding: "utf8",
+  });
 }
 
 /** Asserts the invocation succeeds, and hands back its streams. */
@@ -418,6 +430,41 @@ try {
 
     failsLoudly("program: refuses an unknown verb", ["nonsuch"], "unknown command 'nonsuch'");
     succeeds("doctor: reports the render path", ["doctor"]);
+  }
+
+  // ------------------------------------------------- the render path absent
+  // Playwright is loaded when a render starts, never at module load, so the
+  // static verbs answer identically on a checkout without it.
+  {
+    for (const verb of ["lint", "cells"]) {
+      const withPlaywright = invoke([verb, source]);
+      const without = invokeWithoutPlaywright([verb, source]);
+      assert.ok(withPlaywright.stdout.length > 0, `${verb} must report something for the comparison to mean anything, got nothing`);
+      assert.equal(without.status, withPlaywright.status, `${verb} must exit the same without playwright, got ${without.status}\n${without.stderr}`);
+      assert.equal(without.stdout, withPlaywright.stdout, `${verb} must report the same without playwright, got:\n${without.stdout}`);
+      assert.ok(!without.stderr.includes("ERR_MODULE_NOT_FOUND"), `${verb} must not die on the missing module, got:\n${without.stderr}`);
+      passed += 1;
+      console.log(`ok  ${verb}: unchanged without playwright`);
+    }
+
+    const sick = invokeWithoutPlaywright(["doctor"]);
+    assert.equal(sick.status, 1, `doctor must exit 1 without playwright, got ${sick.status}\n${sick.stderr}`);
+    assert.ok(
+      sick.stderr.includes("playwright package: NOT INSTALLED") && sick.stderr.includes("npm install"),
+      `doctor must name the missing package and its fix, got:\n${sick.stderr}`,
+    );
+    passed += 1;
+    console.log("ok  doctor: names the missing playwright package");
+
+    const refused = invokeWithoutPlaywright(["render", source, "--png"]);
+    assert.notEqual(refused.status, 0, "render must fail without playwright");
+    assert.ok(
+      refused.stderr.includes("playwright not installed") && refused.stderr.includes("doctor"),
+      `render must fail with the doctor guidance, got:\n${refused.stderr}`,
+    );
+    assert.ok(!refused.stderr.includes("ERR_MODULE_NOT_FOUND"), `render must not leak a module-not-found stack, got:\n${refused.stderr}`);
+    passed += 1;
+    console.log("ok  render: fails with the doctor guidance without playwright");
   }
 
   console.log(`argument parsing tests passed (${passed} checks)`);

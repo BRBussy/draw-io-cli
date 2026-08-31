@@ -438,9 +438,9 @@ program
 
 program
   .command("doctor")
-  .description("check the render path: the extension webapp and the playwright Chromium build")
-  .action(() => {
-    process.exit(doctor());
+  .description("check the render path: the extension webapp, the playwright package and its Chromium build")
+  .action(async () => {
+    process.exit(await doctor());
   });
 
 program.parseAsync(process.argv).catch((error) => {
