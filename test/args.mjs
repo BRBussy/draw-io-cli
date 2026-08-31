@@ -43,6 +43,33 @@ const FIXTURE = `<mxfile>
 </mxfile>
 `;
 
+// A source whose points array and offset point are spelled other than the
+// canonical forms the editing verbs splice in: a double space before the
+// attribute, and a separate closing tag where the canonical point self-closes.
+const ODD_SPELLING = `<mxfile>
+  <diagram name="odd" id="odd-test">
+    <mxGraphModel dx="800" dy="600" grid="0" page="1" pageWidth="850" pageHeight="1100">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="e" style="html=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array  as="points">
+              <mxPoint x="10" y="10" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="el" value="LABEL" style="edgeLabel;html=1;" vertex="1" connectable="0" parent="e">
+          <mxGeometry x="0" relative="1" as="geometry">
+            <mxPoint x="4" y="0" as="offset"></mxPoint>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
+`;
+
 // The model a desktop-saved .drawio hides inside a compressed payload. It
 // carries a planted violation (an id the webapp reserves) that only a reader
 // which uncompresses can ever see.
@@ -418,6 +445,25 @@ try {
     assert.ok(offset.stderr.includes("edited in place"), "the re-render reminder belongs on stderr");
     failsLoudly("set-label-offset: refuses non-numeric offsets", ["set-label-offset", fresh(), "el", "a", "b"], "set-label-offset requires numeric dx and dy");
     failsLoudly("set-label-offset: refuses a fifth positional", ["set-label-offset", fresh(), "el", "1", "2", "3"], "unexpected argument: 3");
+
+    // An element the exact-spelling replace misses would be joined by a second
+    // one, not replaced. The prepended array reads back as the intended
+    // waypoints, and an offset set to the values already there reads back as
+    // intended too, so only the post-condition can refuse these.
+    const odd = join(dir, "odd-spelling.drawio");
+    writeFileSync(odd, ODD_SPELLING);
+    failsLoudly(
+      "set-waypoints: refuses a source whose points array is spelled differently",
+      ["set-waypoints", odd, "e", "200,130"],
+      "would leave two of them",
+    );
+    assert.equal(readFileSync(odd, "utf8"), ODD_SPELLING, "a refused set-waypoints must leave the file byte-identical");
+    failsLoudly(
+      "set-label-offset: refuses a source whose offset point is spelled differently",
+      ["set-label-offset", odd, "el", "4", "0"],
+      "would leave two of them",
+    );
+    assert.equal(readFileSync(odd, "utf8"), ODD_SPELLING, "a refused set-label-offset must leave the file byte-identical");
 
     // Editing verbs write the .drawio source, never a rendered output.
     failsLoudly(

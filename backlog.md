@@ -86,7 +86,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
   - test: extend test/args.mjs with the `./` spelling plus `--force`, asserting a
     nonzero exit, the refusal message, and an unchanged input file.
 
-- [ ] Guard `setWaypoints` against duplicating the points array
+- [x] Guard `setWaypoints` against duplicating the points array
   - category: bug
   - description: the regex in src/edit.js matches only the exact spelling
     `<Array as="points">`. An existing array spelled differently (attribute spacing or

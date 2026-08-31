@@ -70,6 +70,22 @@ function openedGeometry(slice, g) {
 }
 
 /**
+ * Refuses an edit that would leave two of an element inside one geometry. The
+ * replace patterns below are spelling-exact, so an element written any other
+ * way survives them and the canonical one joins it instead of replacing it.
+ * The duplicate can read back as the intended value, so only a count of the
+ * edited body catches it.
+ */
+function refuseDuplicate(body, re, id, canonical) {
+  if ((body.match(re)?.length ?? 0) > 1) {
+    throw new Error(
+      `cell ${id} already holds a ${canonical} spelled differently, so this edit would leave two of them: ` +
+        "correct that element's spelling in the source (or delete it), then run the command again",
+    );
+  }
+}
+
+/**
  * Replaces a cell's waypoints with the given points, or removes them all when
  * the list is empty. The points land as a canonical `<Array as="points">`
  * inside the geometry, existing serialisation elsewhere untouched.
@@ -96,6 +112,7 @@ export function setWaypoints(xml, id, points) {
   const array = `<Array as="points">${points.map((p) => `<mxPoint x="${p.x}" y="${p.y}" />`).join("")}</Array>`;
   const inner = body();
   const replaced = arrayRe.test(inner) ? inner.replace(arrayRe, array) : array + inner;
+  refuseDuplicate(replaced, /<Array\b[^>]*\bas="points"/g, id, '<Array as="points">');
   slice = splice(slice, g.headEnd + 1, g.end - "</mxGeometry>".length, replaced);
   return splice(xml, open, end, slice);
 }
@@ -120,6 +137,7 @@ export function setLabelOffset(xml, id, dx, dy) {
   const point = `<mxPoint x="${dx}" y="${dy}" as="offset" />`;
   const inner = slice.slice(g.headEnd + 1, g.end - "</mxGeometry>".length);
   const replaced = offsetRe.test(inner) ? inner.replace(offsetRe, point) : inner + point;
+  refuseDuplicate(replaced, /<mxPoint\b[^>]*\bas="offset"/g, id, '<mxPoint as="offset" />');
   slice = splice(slice, g.headEnd + 1, g.end - "</mxGeometry>".length, replaced);
   return splice(xml, open, end, slice);
 }
