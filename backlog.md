@@ -54,7 +54,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
     (playwright route handler) records aborted requests, and assert the external
     request was aborted and the export still succeeds.
 
-- [ ] Wire test/lint-violations.mjs into `npm test`
+- [x] Wire test/lint-violations.mjs into `npm test`
   - category: tests, reproduced
   - description: package.json runs only args.mjs and smoke.mjs, and nothing references
     lint-violations.mjs, so the suite proving the lint checks fire never runs. A guard

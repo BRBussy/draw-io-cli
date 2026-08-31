@@ -210,8 +210,11 @@ node src/cli.js doctor
 npm test
 ```
 
-Runs the argument-parsing suite (every verb's flags, positionals and refusals), then
-renders a small diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
+Runs three suites, cheapest first. The lint-violations suite (`test/lint-violations.mjs`)
+plants a violation for every lint check and asserts it fires, with a clean control beside
+it that must stay quiet. The argument-parsing suite (`test/args.mjs`) covers every verb's
+flags, positionals and refusals. The smoke suite (`test/smoke.mjs`) renders a small
+diagram to PNG and SVG, extracts the PNG back, and asserts the round trip.
 Each run also leaves its rendered exports in `test/` as gitignored artifacts named
 `smoke-<timestamp>-test-result.drawio.png` / `.drawio.svg`, so you can open the hello world
 the test checked and see the renderer working with your own eyes.
