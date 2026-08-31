@@ -41,7 +41,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
   - test: extend test/args.mjs with `--scale abc`, `--scale 0` and `--border abc`
     cases asserting nonzero exit, the message on stderr, and nothing on stdout.
 
-- [ ] Block network egress during render
+- [x] Block network egress during render
   - category: security
   - description: `renderDiagram` loads untrusted XML into headless Chromium with full
     network access. `html=1` labels carry arbitrary markup, and `offline=1` is

@@ -85,6 +85,39 @@ try {
   assert.match(svg, /<svg\b[^>]*\scontent="/, "SVG root lacks the embedded content attribute");
   assert.ok(!svg.includes("img/lib/"), "SVG export references img/lib/ instead of inlined data URIs");
 
+  // Egress block: an html=1 label carries arbitrary markup, so a hostile
+  // diagram can point the browser at a remote host while it renders. Chromium
+  // really does attempt the fetch below, and the blocked line asserted here is
+  // what keeps this case honest: a webapp that stopped attempting it would
+  // leave the guard with an empty input set, which is vacuous, not green.
+  const phoning = HELLO_DRAWIO.replace(
+    'value="Hello"',
+    'value="&lt;img src=&quot;http://blocked.invalid/pixel.png&quot; width=&quot;20&quot; height=&quot;20&quot;&gt;Hello"',
+  );
+  writeFileSync(join(dir, "phonehome.drawio"), phoning);
+  const phoneOut = join(dir, "phonehome.drawio.png");
+  const phoned = run(["render", join(dir, "phonehome.drawio"), "--png", phoneOut]);
+  assert.ok(
+    phoned.stderr.includes("render: blocked external request to http://blocked.invalid/pixel.png"),
+    `the label's remote fetch must be reported as blocked, got:\n${phoned.stderr}`,
+  );
+  const phonedPng = readFileSync(phoneOut);
+  assert.ok(phonedPng.length > 1000, "the blocked render's PNG is implausibly small");
+  assert.ok(hasMxfileChunk(phonedPng), "the blocked render's PNG lacks the tEXt chunk keyed mxfile");
+  // The block is scoped by origin, never by resource type: an embedded data:
+  // URI icon is not a request and must render untouched.
+  const dataIcon = HELLO_DRAWIO.replace(
+    "</root>",
+    '<mxCell id="di" value="" style="shape=image;html=1;image=data:image/png,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==;" vertex="1" parent="1"><mxGeometry x="500" y="40" width="60" height="60" as="geometry" /></mxCell></root>',
+  );
+  writeFileSync(join(dir, "dataicon.drawio"), dataIcon);
+  const iconRun = run(["render", join(dir, "dataicon.drawio"), "--svg", join(dir, "dataicon.drawio.svg")]);
+  assert.ok(!iconRun.stderr.includes("blocked external request"), `a data: URI icon must not be blocked, got:\n${iconRun.stderr}`);
+  assert.ok(
+    readFileSync(join(dir, "dataicon.drawio.svg"), "utf8").includes("data:image/png"),
+    "the data: URI icon must survive into the SVG export",
+  );
+
   // drawio.config.json in the source's directory sets render defaults, flags override it.
   writeFileSync(join(dir, "drawio.config.json"), JSON.stringify({ render: { scale: 1 } }));
   run(["render", source, "--png", join(dir, "configured.drawio.png")]);

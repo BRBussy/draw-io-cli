@@ -105,6 +105,27 @@ function decodeDataUri(uri) {
 }
 
 /**
+ * Aborts every request the render does not address to its own local server,
+ * naming each blocked URL on stderr. The rendered XML is untrusted: an
+ * html=1 label carries arbitrary markup, so a hostile diagram can point the
+ * browser at a remote host while it renders. The webapp's own offline=1 is
+ * app-level configuration, not a browser restriction.
+ */
+async function blockEgress(context, origin) {
+  await context.route("**/*", (route, request) => {
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(request.url()).origin === origin;
+    } catch {
+      sameOrigin = false;
+    }
+    if (sameOrigin) return route.continue();
+    console.error(`render: blocked external request to ${request.url()}`);
+    return route.abort();
+  });
+}
+
+/**
  * Renders mxfile XML with the extension's bundled draw.io webapp under
  * headless Chromium and returns the requested exports. formats is an array
  * of "xmlpng" and "xmlsvg" entries. Resolves to a map from format to Buffer
@@ -122,8 +143,11 @@ export async function renderDiagram(xml, { formats, scale = 3, border = 10 }) {
   let browser = null;
   try {
     browser = await chromium.launch();
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const context = await browser.newContext();
+    await blockEgress(context, origin);
+    const page = await context.newPage();
+    await page.goto(`${origin}/`);
     await waitForState(page, "init", 60_000);
     await page.evaluate((x) => window.loadXml(x), xml);
     await waitForState(page, "loaded", 60_000);

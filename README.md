@@ -58,6 +58,12 @@ Scale is the resolution lever: pixel dimensions grow linearly with it and file s
 roughly with its square. Raise it when a diagram looks soft, lower it when files
 get heavy.
 
+Rendering opens the diagram's markup in a headless browser, so every request the page
+makes is intercepted and aborted unless it addresses the render's own localhost server.
+A diagram that reaches for a remote resource (an `html=1` label embedding a remote image,
+for example) renders without it, and each blocked URL is named on stderr. Embedded
+`data:` URI images are not requests, so they still render.
+
 ### lint
 
 Statically verifies a diagram's routing from the XML alone: every edge attached, no
