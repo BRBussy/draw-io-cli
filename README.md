@@ -63,6 +63,8 @@ get heavy.
 Statically verifies a diagram's routing from the XML alone: every edge attached, no
 diagonal segments, no near-straight stutters, no segment cutting through a shape, nearby
 parallel runs exactly aligned, edge `strokeWidth` at least 2, no webapp-poisonous cell ids.
+Two elements sharing one cell id is an error naming that id: duplicate ids break the
+webapp's model, and only the last holder of the id reaches the checks above.
 Verification requires edges to pin their connection points (`exitX`/`exitY`/`entryX`/`entryY`)
 and declare jogs as explicit waypoints: edges with floating connections are reported as
 warnings, since their rendered route is the router's guess. Errors exit 1, `--strict`

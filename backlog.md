@@ -18,7 +18,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
     base64-wrapped in a `<diagram>` tag. Assert `lint` finds a violation planted inside
     the compressed model, and assert `cells --xml` exits 1 with the refusal message.
 
-- [ ] Lint errors on duplicate cell ids
+- [x] Lint errors on duplicate cell ids
   - category: bug (silent false pass), reproduced
   - description: `parseCells` stores cells in a Map, so the last duplicate silently
     wins and lint passes a model that src/cells.js itself calls webapp-breaking.

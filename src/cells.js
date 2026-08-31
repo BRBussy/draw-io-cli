@@ -1,4 +1,4 @@
-import { parseCells } from "./lint.js";
+import { ID_BEARING, parseCells } from "./lint.js";
 import { elideImagePayloads } from "./extract.js";
 
 function absOrigin(cells, id) {
@@ -62,10 +62,6 @@ export function cellsReport(xml, { full = false } = {}) {
   }
   return lines.join("\n");
 }
-
-// The elements that can carry a cell id. A cell wrapped for custom attributes
-// holds its id on the wrapper, with the mxCell inside carrying none.
-const ID_BEARING = ["mxCell", "object", "UserObject"];
 
 /**
  * Walks a start tag from its `<`, returning where it ends and whether it

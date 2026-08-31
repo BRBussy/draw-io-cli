@@ -50,13 +50,22 @@ const tagOf = (node) => Object.keys(node).find((k) => k !== ATTRS);
 const attrsOf = (node) => node[ATTRS] ?? {};
 const childrenOf = (node, tag) => (Array.isArray(node[tag]) ? node[tag] : []);
 
-/** Appends every mxCell element under `nodes`, in document order. */
-function collectCells(nodes, out) {
+// The elements that can carry a cell id. A cell wrapped for custom attributes
+// holds its id on the wrapper, with the mxCell inside carrying none.
+export const ID_BEARING = ["mxCell", "object", "UserObject"];
+
+/**
+ * Appends every mxCell element under `nodes` to `out`, in document order, and
+ * every id an id-bearing element carries to `ids`.
+ */
+function collectCells(nodes, out, ids) {
   for (const node of nodes) {
     const tag = tagOf(node);
     if (tag === undefined || tag === "#text") continue;
+    const id = attrsOf(node).id;
+    if (id !== undefined && ID_BEARING.includes(tag)) ids.push(id);
     if (tag === "mxCell") out.push(node);
-    collectCells(childrenOf(node, tag), out);
+    collectCells(childrenOf(node, tag), out, ids);
   }
   return out;
 }
@@ -91,15 +100,14 @@ function styleMap(style) {
 }
 
 /**
- * Parses every mxCell in the mxfile into a map keyed by cell id, in document
- * order. Attribute values are the file's own characters, entities and all.
- * A cell wrapped in an `<object>`/`<UserObject>` carries its id on the wrapper,
- * so the wrapped mxCell has none and is skipped along with any other id-less
- * cell.
+ * The {@link parseCells} map, plus every id an id-bearing element carries in
+ * document order, duplicates and all. Keying the map on id collapses a
+ * duplicate, so that list is the one place two cells sharing an id are still
+ * two.
  *
  * @throws When the text is not well-formed XML.
  */
-export function parseCells(xml) {
+function parseModel(xml) {
   let doc;
   try {
     doc = XML.parse(xml);
@@ -107,7 +115,8 @@ export function parseCells(xml) {
     throw new Error(`the model is not well-formed XML (${cause.message}), fix the source before trusting any check`, { cause });
   }
   const cells = new Map();
-  for (const node of collectCells(doc, [])) {
+  const ids = [];
+  for (const node of collectCells(doc, [], ids)) {
     const a = attrsOf(node);
     // A cell without an id cannot be addressed or parented to, and storing it
     // under the key undefined would make absOrigin's parent walk cyclic (the
@@ -129,7 +138,20 @@ export function parseCells(xml) {
       offset: offsetNode === undefined ? null : pointOf(attrsOf(offsetNode)),
     });
   }
-  return cells;
+  return { cells, ids };
+}
+
+/**
+ * Parses every mxCell in the mxfile into a map keyed by cell id, in document
+ * order. Attribute values are the file's own characters, entities and all.
+ * A cell wrapped in an `<object>`/`<UserObject>` carries its id on the wrapper,
+ * so the wrapped mxCell has none and is skipped along with any other id-less
+ * cell.
+ *
+ * @throws When the text is not well-formed XML.
+ */
+export function parseCells(xml) {
+  return parseModel(xml).cells;
 }
 
 function absOrigin(cells, id) {
@@ -407,7 +429,7 @@ function segmentCrossesBox(a, b, box) {
  */
 export function lint(xml) {
   const errors = [], warnings = [];
-  const cells = parseCells(xml);
+  const { cells, ids } = parseModel(xml);
   const edges = [...cells.values()].filter((c) => c.attrs.edge === "1");
   const isContainer = new Set([...cells.values()].map((c) => c.attrs.parent));
   const shapes = [...cells.values()].filter(
@@ -428,6 +450,19 @@ export function lint(xml) {
         `(a splice that buried cells in a comment or a CDATA block is the usual cause), ` +
         `fix the source before trusting any check`,
     );
+  }
+
+  // Counted off the document walk, since the cells map above keeps only the
+  // last cell holding a given id and every check below runs on that survivor.
+  const idCounts = new Map();
+  for (const id of ids) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+  for (const [id, count] of idCounts) {
+    if (count > 1) {
+      errors.push(
+        `cell id "${id}" is carried by ${count} elements: duplicate ids break the webapp's model, ` +
+          `and only the last of them is linted. Give each cell its own id`,
+      );
+    }
   }
 
   for (const c of cells.values()) {

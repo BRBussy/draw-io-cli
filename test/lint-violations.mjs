@@ -82,6 +82,20 @@ const BASE = box("a", 0, 300) + box("b", 900, 300);
   assert.ok(has(bad.errors, "the model is malformed"), "cell-count guard must fire");
 }
 
+{ // Duplicate ids: two cells sharing one id error, unique ids stay quiet.
+  const bad = lint(wrap(box("a", 0, 0) + box("a", 300, 0)));
+  assert.ok(has(bad.errors, 'cell id "a" is carried by 2 elements'), "duplicate id must fire");
+  const good = lint(wrap(box("a", 0, 0) + box("b", 300, 0)));
+  assert.ok(lacks(good.errors, "duplicate ids"), "unique ids must stay quiet");
+}
+
+{ // A duplicate whose second holder is an <object> wrapper fires too: the
+  // wrapper carries the id and the mxCell inside it carries none.
+  const wrapped = `<object id="a" label="x"><mxCell style="html=1;" vertex="1" parent="1"><mxGeometry x="300" y="0" width="120" height="40" as="geometry" /></mxCell></object>`;
+  const bad = lint(wrap(box("a", 0, 0) + wrapped));
+  assert.ok(has(bad.errors, 'cell id "a" is carried by 2 elements'), "wrapped duplicate must fire");
+}
+
 { // Token overflow: an unbreakable token wider than its box notes, and an
   // icon whose caption renders outside its box stays quiet.
   const bad = lint(wrap(box("t", 0, 0, 40, 28, "completeWithdrawTransaction(...)")));
