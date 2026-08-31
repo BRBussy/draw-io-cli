@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import { extractMxfile, uncompressMxfile, hasCompressedDiagram, elideImagePayloads, decodeNumericEntities } from "./extract.js";
 import { measure } from "./measure.js";
@@ -147,7 +148,11 @@ function runExtract(input, options) {
     return;
   }
   const target = output ?? defaultExtractOutput(input);
-  if (options.elideImages && target === input) fail("refusing to overwrite the input with an elided (non-rendering) model");
+  // Two spellings (a "./" segment, "..", a relative path) name one file, so
+  // the identity this guard needs is between resolved paths.
+  if (options.elideImages && resolve(target) === resolve(input)) {
+    fail("refusing to overwrite the input with an elided (non-rendering) model");
+  }
   // The default target is the sibling .drawio, which for a rendered pair is
   // the source of truth, and extracted XML is the webapp's re-serialisation
   // of the model, not that file's original bytes.

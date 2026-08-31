@@ -273,6 +273,22 @@ try {
     failsLoudly("extract: refuses to overwrite without --force", ["extract", source, "-o", target], "refusing to overwrite");
     succeeds("extract: --force overwrites", ["extract", source, "-o", target, "--force"]);
     succeeds("extract: --decode-entities is accepted with --elide-images", ["extract", source, "--elide-images", "--decode-entities"]);
+
+    // An elided model no longer renders, so the input is refused as its target
+    // under any spelling. --force answers the overwrite guard, never this one.
+    {
+      const before = readFileSync(source);
+      const spelled = `${dir}/./fixture.drawio`;
+      failsLoudly(
+        "extract: --elide-images refuses another spelling of the input, --force included",
+        ["extract", source, "--elide-images", "-o", spelled, "--force"],
+        "refusing to overwrite the input with an elided (non-rendering) model",
+      );
+      assert.deepEqual(readFileSync(source), before, "a refused elide must leave the input byte-identical");
+      passed += 1;
+      console.log("ok  extract: the refused elide leaves the input untouched");
+    }
+
     failsLoudly("extract: -o needs a path", ["extract", source, "-o"], "-o requires a path");
     failsLoudly("extract: refuses a second positional", ["extract", source, "spare"], "unexpected argument: spare");
     failsLoudly("extract: refuses an unknown flag", ["extract", source, "--bogus"], "unexpected argument: --bogus");

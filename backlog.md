@@ -76,7 +76,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
   - test: temporarily rename node_modules/playwright, run `lint`, `cells` and
     `doctor`, assert the behaviours above, restore the directory.
 
-- [ ] Compare resolved paths in the elide self-overwrite guard
+- [x] Compare resolved paths in the elide self-overwrite guard
   - category: bug, reproduced
   - description: the guard in src/cli.js checks `target === input` as strings, so
     `extract x.drawio --elide-images -o ./x.drawio --force` writes the elided
