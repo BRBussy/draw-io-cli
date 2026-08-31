@@ -3,7 +3,7 @@
 Ordered by priority. Findings come from a full review of the CLI (2026-08-31). Every
 bug marked "reproduced" was confirmed by running the CLI against a planted fixture.
 
-- [ ] Detect compressed models in `lint` and `cells` instead of passing green
+- [x] Detect compressed models in `lint` and `cells` instead of passing green
   - category: bug (silent false pass), reproduced
   - description: `readStoredXml` (src/cli.js) never uncompresses a deflate-compressed
     `.drawio` (the draw.io desktop default save format). `lint` exits 0 with

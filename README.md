@@ -100,6 +100,11 @@ all legend captions, with the exempted count named.
 node src/cli.js lint diagram.drawio
 ```
 
+A `.drawio` saved by the desktop app stores each page deflated rather than as XML, and
+`lint` expands such a page before checking it, so a compressed file is linted on its real
+model instead of passing green with nothing inspected. The same holds for the `cells`
+table and `styles`.
+
 ### cells
 
 Prints the diagram as a readable table: one line per cell with kind, absolute geometry,
@@ -127,6 +132,10 @@ and what keeps a cell carrying a 32KB base64 style readable.
 ```
 node src/cli.js cells diagram.drawio --xml some-node --elide-images
 ```
+
+A compressed page holds no source bytes to slice, so `--xml` refuses a file the desktop
+app saved deflated and names `extract` as the way forward: extract it to uncompressed XML
+first, then slice that file. The cells table itself reads a compressed page fine.
 
 ### measure
 
@@ -171,7 +180,8 @@ printed under it.
 ### styles
 
 Digests a palette file into a named style catalogue: each labelled cell's copyable style
-string, image payloads elided.
+string, image payloads elided. A page stored compressed is expanded first, as it is for
+`lint` and the `cells` table.
 
 ```
 node src/cli.js styles diagram.drawio

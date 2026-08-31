@@ -38,21 +38,40 @@ export function mxfileFromSvg(svg) {
   return he.decode(root[1], { isAttributeValue: true });
 }
 
+// One diagram element, its payload captured apart from its tags. The
+// expansion and the detection below both read a payload through this, so the
+// two answer the same question of the same text.
+const DIAGRAM_PAYLOAD = /(<diagram\b[^>]*>)([\s\S]*?)(<\/diagram>)/g;
+
+/**
+ * Whether a diagram payload is stored compressed. The uncompressed form is
+ * XML, so a payload holding text but no element start is the deflate(raw),
+ * base64, URL-encoded form the desktop app saves by default.
+ */
+function isCompressedPayload(payload) {
+  const trimmed = payload.trim();
+  return trimmed !== "" && !trimmed.includes("<");
+}
+
+/** Whether any page of an mxfile is stored compressed. */
+export function hasCompressedDiagram(xml) {
+  for (const match of xml.matchAll(DIAGRAM_PAYLOAD)) {
+    if (isCompressedPayload(match[2])) return true;
+  }
+  return false;
+}
+
 /**
  * Expands every compressed diagram payload in an mxfile so the result is
- * fully uncompressed XML. A compressed payload is deflate(raw), base64,
- * URL-encoded text. Plain-XML payloads pass through unchanged.
+ * fully uncompressed XML. Plain-XML payloads pass through unchanged, so a
+ * file storing every page as XML comes back byte for byte.
  */
 export function uncompressMxfile(xml) {
-  return xml.replace(
-    /(<diagram\b[^>]*>)([\s\S]*?)(<\/diagram>)/g,
-    (whole, open, payload, close) => {
-      const trimmed = payload.trim();
-      if (trimmed === "" || trimmed.includes("<")) return whole;
-      const inflated = inflateRawSync(Buffer.from(trimmed, "base64")).toString("utf8");
-      return open + decodeURIComponent(inflated) + close;
-    },
-  );
+  return xml.replace(DIAGRAM_PAYLOAD, (whole, open, payload, close) => {
+    if (!isCompressedPayload(payload)) return whole;
+    const inflated = inflateRawSync(Buffer.from(payload.trim(), "base64")).toString("utf8");
+    return open + decodeURIComponent(inflated) + close;
+  });
 }
 
 /**

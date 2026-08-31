@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { Command, Option } from "commander";
-import { extractMxfile, uncompressMxfile, elideImagePayloads, decodeNumericEntities } from "./extract.js";
+import { extractMxfile, uncompressMxfile, hasCompressedDiagram, elideImagePayloads, decodeNumericEntities } from "./extract.js";
 import { measure } from "./measure.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
@@ -219,20 +219,36 @@ function readStoredXml(input) {
   return /\.(png|svg)$/i.test(input) ? extractMxfile(raw) : raw.toString("utf8");
 }
 
+/**
+ * Reads a diagram for a report that reads the model rather than the file's
+ * bytes. The desktop app saves a .drawio with its pages deflated, and the
+ * stored text of such a file carries no cells at all, so every reading report
+ * expands the payload first rather than inspecting nothing and passing.
+ */
+function readModelXml(input) {
+  return uncompressMxfile(readStoredXml(input));
+}
+
 function runCells(input, options) {
   const full = options.full === true;
   const elide = options.elideImages === true;
   if (options.xml === undefined) {
     if (elide) fail("--elide-images belongs to cells --xml <id>: the cells table always elides image payloads");
-    console.log(cellsReport(readStoredXml(input), { full }));
+    console.log(cellsReport(readModelXml(input), { full }));
     return;
   }
   if (full) fail("--full and --xml are different reports: --xml prints one cell's source bytes, never truncated");
-  console.log(cellXml(readStoredXml(input), options.xml, { elideImages: elide }));
+  const stored = readStoredXml(input);
+  // --xml prints the file's own bytes, and a compressed page has no bytes to
+  // slice: uncompressing would print text that appears nowhere in the file.
+  if (hasCompressedDiagram(stored)) {
+    fail(`compressed model: run extract first, then slice the uncompressed file, since --xml prints ${input}'s own bytes and this page holds none`);
+  }
+  console.log(cellXml(stored, options.xml, { elideImages: elide }));
 }
 
 function runLint(input, options) {
-  const { errors, warnings, notes } = lint(readStoredXml(input));
+  const { errors, warnings, notes } = lint(readModelXml(input));
   for (const n of notes) console.error(`note: ${n}`);
   for (const w of warnings) console.error(`warning: ${w}`);
   for (const e of errors) console.error(`error: ${e}`);
@@ -359,7 +375,7 @@ program
   .description("digest a palette file into a named catalogue of copyable style strings")
   .argument("<input>", "a .drawio, .drawio.png or .drawio.svg file")
   .action((input) => {
-    console.log(stylesReport(readStoredXml(input)));
+    console.log(stylesReport(readModelXml(input)));
   });
 
 program

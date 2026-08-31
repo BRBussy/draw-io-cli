@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync } from "node:fs";
+import { deflateRawSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,25 @@ const FIXTURE = `<mxfile>
   </diagram>
 </mxfile>
 `;
+
+// The model a desktop-saved .drawio hides inside a compressed payload. It
+// carries a planted violation (an id the webapp reserves) that only a reader
+// which uncompresses can ever see.
+const COMPRESSED_MODEL = `<mxGraphModel dx="800" dy="600" grid="0" page="1" pageWidth="850" pageHeight="1100">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+    <mxCell id="map" value="POISONED" style="rounded=0;whiteSpace=wrap;html=1;spacingLeft=13;" vertex="1" parent="1">
+      <mxGeometry x="40" y="40" width="160" height="60" as="geometry" />
+    </mxCell>
+  </root>
+</mxGraphModel>`;
+
+/** Wraps a model the way the desktop app stores it: deflated, base64, URL-encoded. */
+function compressedMxfile(model) {
+  const payload = deflateRawSync(Buffer.from(encodeURIComponent(model), "utf8")).toString("base64");
+  return `<mxfile host="Electron" version="24.7.17">\n  <diagram name="packed" id="packed-1">${payload}</diagram>\n</mxfile>\n`;
+}
 
 let passed = 0;
 
@@ -277,6 +297,38 @@ try {
     const styles = succeeds("styles: the catalogue lands on stdout", ["styles", source]);
     assert.ok(styles.stdout.includes("spacingLeft=20"), `styles must print the style strings, got:\n${styles.stdout}`);
     failsLoudly("styles: refuses a second positional", ["styles", source, source], `unexpected argument: ${source}`);
+  }
+
+  // ------------------------------------------------- compressed .drawio files
+  // The desktop app's default save format. Every reading report must see the
+  // real model, and the one byte-verbatim report must refuse it loudly rather
+  // than print bytes the file does not contain.
+  {
+    const packed = join(dir, "packed.drawio");
+    writeFileSync(packed, compressedMxfile(COMPRESSED_MODEL));
+
+    const linted = invoke(["lint", packed]);
+    assert.equal(linted.status, 1, `lint must fail on the violation planted inside the payload, got ${linted.status}\n${linted.stderr}`);
+    assert.ok(
+      linted.stderr.includes('cell id "map" collides with a webapp builtin'),
+      `lint must report the compressed model's own cells, got:\n${linted.stderr}`,
+    );
+    assert.match(linted.stdout, /^[1-9]\d* error\(s\)/, `the count must name the errors found, got:\n${linted.stdout}`);
+    passed += 1;
+    console.log("ok  lint: reports on the model inside a compressed .drawio");
+
+    const table = succeeds("cells: the table reads a compressed model", ["cells", packed]);
+    assert.ok(table.stdout.includes("SHAPE map"), `the table must list the compressed model's cells, got:\n${table.stdout}`);
+    assert.ok(table.stdout.includes("POISONED"), `the table must carry the cell's label, got:\n${table.stdout}`);
+
+    const styles = succeeds("styles: the catalogue reads a compressed model", ["styles", packed]);
+    assert.ok(styles.stdout.includes("spacingLeft=13"), `styles must print the compressed model's styles, got:\n${styles.stdout}`);
+
+    failsLoudly(
+      "cells: --xml refuses a compressed model and names extract",
+      ["cells", packed, "--xml", "map"],
+      "compressed model: run extract first",
+    );
   }
 
   // ------------------------------------------------------------- diff-cells
