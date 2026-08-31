@@ -79,6 +79,28 @@ function finiteNumber(flag) {
   };
 }
 
+/**
+ * The scale a render used, shared with measure, which reads that render back.
+ * An unvalidated value would reach measure as NaN, which its wrong-scale guard
+ * cannot catch: every comparison against NaN is false.
+ */
+function scaleOption(description) {
+  return valueOption("--scale <n>", description, "--scale requires a number", (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) fail("--scale must be a positive number");
+    return parsed;
+  });
+}
+
+/** The border partner of scaleOption, on the same two verbs. */
+function borderOption(description) {
+  return valueOption("--border <n>", description, "--border requires a number", (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) fail("--border must be a non-negative number");
+    return parsed;
+  });
+}
+
 function writeOutput(path, data) {
   // Write-then-rename, so an observer (editor, file watcher) never sees a torn file.
   const temp = `${path}.tmp-${process.pid}`;
@@ -337,20 +359,8 @@ program
   .option("--png [path]", "write a PNG, at this path when given (the default with neither format)")
   .option("--svg [path]", "write an SVG, at this path when given")
   .addOption(valueOption("--page <name|index>", "render one page of a multi-page file", "--page requires a name or zero-based index"))
-  .addOption(
-    valueOption("--scale <n>", "export scale, overriding drawio.config.json", "--scale requires a number", (value) => {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed) || parsed <= 0) fail("--scale must be a positive number");
-      return parsed;
-    }),
-  )
-  .addOption(
-    valueOption("--border <n>", "export border, overriding drawio.config.json", "--border requires a number", (value) => {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed) || parsed < 0) fail("--border must be a non-negative number");
-      return parsed;
-    }),
-  )
+  .addOption(scaleOption("export scale, overriding drawio.config.json"))
+  .addOption(borderOption("export border, overriding drawio.config.json"))
   .addOption(new Option("--force").hideHelp())
   .action(runRender);
 
@@ -387,8 +397,8 @@ program
   .addOption(valueOption("--gaps <id>", "report this cell's gaps to its neighbours (repeatable)", "--gaps requires a cell id (got nothing)", collectId("--gaps")))
   .option("--affine", "print the model-unit to pixel mapping this calibration implies")
   .option("--quiet-calibration", "drop the calibration line and note, never the warning")
-  .addOption(valueOption("--scale <n>", "the scale the PNG was rendered at", "--scale requires a number", (value) => Number(value)))
-  .addOption(valueOption("--border <n>", "the border the PNG was rendered with", "--border requires a number", (value) => Number(value)))
+  .addOption(scaleOption("the scale the PNG was rendered at"))
+  .addOption(borderOption("the border the PNG was rendered with"))
   .action(runMeasure);
 
 program

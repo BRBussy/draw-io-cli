@@ -29,7 +29,7 @@ bug marked "reproduced" was confirmed by running the CLI against a planted fixtu
   - test: add a planted-violation case to test/lint-violations.mjs with two `id="a"`
     cells firing, and a control with unique ids staying quiet.
 
-- [ ] Validate `measure --scale` and `--border` as finite numbers
+- [x] Validate `measure --scale` and `--border` as finite numbers
   - category: bug, reproduced
   - description: the parsers in src/cli.js use bare `Number(value)`, so
     `measure --scale abc` publishes a NaN calibration and bogus "no ink found" lines

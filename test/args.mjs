@@ -143,6 +143,15 @@ try {
     const quiet = succeeds("measure: --quiet-calibration drops the calibration line", ["measure", png, "--cell", "padded", "--quiet-calibration"]);
     assert.ok(!quiet.stdout.includes("calibration:"), `--quiet-calibration must drop the line, got:\n${quiet.stdout}`);
     assert.ok(quiet.stdout.includes("cell padded:"), "--quiet-calibration must keep the measurements");
+
+    // A refused scale or border must stop the run before any measurement
+    // prints. These cases use the rendered PNG on purpose: a measurable input
+    // is what lets an unvalidated NaN reach the report as a calibration line
+    // and a run of "no ink found" verdicts, under exit 0.
+    failsLoudly("measure: --scale must be a number", ["measure", png, "--cell", "padded", "--scale", "abc"], "--scale must be a positive number");
+    failsLoudly("measure: --scale must be positive", ["measure", png, "--cell", "padded", "--scale", "0"], "--scale must be a positive number");
+    failsLoudly("measure: --border must be a number", ["measure", png, "--cell", "padded", "--border", "abc"], "--border must be a non-negative number");
+    failsLoudly("measure: --border must be non-negative", ["measure", png, "--cell", "padded", "--border", "-1"], "--border must be a non-negative number");
   }
 
   // An id argument may never begin with a dash, on any of the three options.
