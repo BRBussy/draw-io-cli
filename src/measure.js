@@ -26,6 +26,9 @@ function bbox(cells, c) {
 
 const INK = ([r, g, b, a]) => a > 16 && (r < 245 || g < 245 || b < 245);
 
+/** The marker an under-minimum icon-gap line carries, shared with the CLI's exit code. */
+export const ICON_GAP_FLAG = "UNDER MINIMUM";
+
 // units: the uniform text padding a box is sized to, left/right and top/bottom.
 const FIT_PAD_X = 8;
 const FIT_PAD_Y = 6;
@@ -91,6 +94,14 @@ function strokeRgb(style) {
  * @param affine - When true, print the model-unit to pixel mapping per axis in
  *   both directions, taken from this same calibration. Refused while a live
  *   calibration WARNING stands: numbers with an unexplained shift mislead.
+ * @param iconGaps - When true, sweep every labelled vertex that geometrically
+ *   contains an image cell (an icon embedded in an actor box) and report the
+ *   clear gap between the icon's rendered ink and the first text glyph, in
+ *   model units. A pair under `minIconGap` is flagged with
+ *   {@link ICON_GAP_FLAG}; a model with no such pairs reports the sweep as
+ *   vacuous rather than green.
+ * @param minIconGap - Minimum acceptable icon-ink-to-glyph gap in model units
+ *   for the `iconGaps` sweep.
  * @param scale - Render scale the PNG was exported at.
  * @param border - Render border, in model units, the PNG was exported with.
  * @param quietCalibration - When true, drop the calibration line and a demoted
@@ -100,7 +111,7 @@ function strokeRgb(style) {
  * @throws When the PNG's size is so far off the prediction that it must have
  *   been rendered at a different scale: numbers would be nonsense.
  */
-export function measure(pngBuffer, xml, { cellIds, fitIds = [], gapIds = [], affine = false, scale, border, quietCalibration = false }) {
+export function measure(pngBuffer, xml, { cellIds, fitIds = [], gapIds = [], affine = false, scale, border, quietCalibration = false, iconGaps = false, minIconGap = 8 }) {
   const img = decodePng(pngBuffer);
   const cells = parseCells(xml);
   const b = modelBounds(cells);
@@ -433,6 +444,84 @@ export function measure(pngBuffer, xml, { cellIds, fitIds = [], gapIds = [], aff
         `  largest empty rectangle: ${round1(best.w)}x${round1(best.h)}u at (${round1(best.x)},${round1(best.y)})`,
       );
     }
+  }
+  // The icon-gap sweep: the style guide's minimum clear space between an
+  // icon's rendered ink and its box's first glyph is judged on the render,
+  // never on cell geometry (cell constants can be uniform while one icon's
+  // ink fills its cell and touches the text). Pairing is geometric, since an
+  // icon may be the box's child or a sibling positioned inside its bounds.
+  if (iconGaps) {
+    const isImage = (k) => k.attrs.vertex === "1" && k.geo &&
+      (k.style.shape === "image" || k.style.image !== undefined);
+    const contains = (outer, inner) =>
+      inner.x >= outer.x - 0.5 && inner.y >= outer.y - 0.5 &&
+      inner.x + inner.w <= outer.x + outer.w + 0.5 &&
+      inner.y + inner.h <= outer.y + outer.h + 0.5;
+    const images = [...cells.values()].filter(isImage).map((k) => ({ cell: k, b: bbox(cells, k) }));
+    let pairs = 0, under = 0;
+    for (const c of cells.values()) {
+      if (c.attrs.vertex !== "1" || !c.geo || isImage(c)) continue;
+      if ((c.attrs.value ?? "").trim() === "") continue;
+      if (cells.get(c.attrs.parent)?.attrs.edge === "1") continue;
+      const box = bbox(cells, c);
+      const inside = images.filter((i) => i.cell.id !== c.id && contains(box, i.b));
+      if (inside.length === 0) continue;
+      pairs += 1;
+      // The rightmost icon is the one the text sits beside; the gap scans
+      // rightward from its cell so an overlap reads as a small gap, not a miss.
+      const icon = inside.reduce((a, i) => (i.b.x + i.b.w > a.b.x + a.b.w ? i : a));
+      // The icon window extends 6u past the cell: the calibration's affine
+      // carries a few units of systematic offset (its residual is split
+      // evenly, so an asymmetric label estimate leaves a shift), and icon ink
+      // displaced past the mapped cell edge must count as icon, never as
+      // text. The guard band sits under the default minimum on purpose: a
+      // true gap smaller than the band is absorbed into the icon ink and
+      // reads as ~0, which is the flagged answer such a gap deserves.
+      const ICON_GUARD = 6;
+      const iconInk = inkIn({ x: icon.b.x, y: icon.b.y, w: icon.b.w + ICON_GUARD, h: icon.b.h }, 0);
+      if (!iconInk) {
+        lines.push(`icon gap ${c.id}: icon ${icon.cell.id} has no rendered ink (a broken payload renders blank)`);
+        continue;
+      }
+      if (iconInk.padR < 0.4) {
+        // Ink to the window's edge is either a true gap under the guard band
+        // or a calibration shift past it: both demand eyes, neither may pass.
+        lines.push(
+          `icon gap ${c.id}: ink saturates icon ${icon.cell.id}'s ${ICON_GUARD}u guard window ` +
+            `(a true gap under the band, or a calibration shift past it): judge this pair by crop ${ICON_GAP_FLAG}`,
+        );
+        under += 1;
+        continue;
+      }
+      // The box's own border stroke must never read as the first glyph, so
+      // the text window peels its inset the way fitLine does: grow it until
+      // the ink pulls clear of the top, bottom and right window edges. The
+      // left edge is exempt, since a tight gap legitimately puts glyph ink
+      // there.
+      const left = icon.b.x + icon.b.w + ICON_GUARD;
+      let textInk = null;
+      for (let inset = 2; inset <= 8; inset += 1) {
+        const region = { x: left, y: box.y + inset, w: box.x + box.w - left - inset, h: box.h - 2 * inset };
+        textInk = region.w > 0 && region.h > 0 ? inkIn(region, 0) : null;
+        if (!textInk) break;
+        if (textInk.padT > 0.4 && textInk.padB > 0.4 && textInk.padR > 0.4) break;
+      }
+      if (!textInk) {
+        lines.push(`icon gap ${c.id}: no text ink found right of icon ${icon.cell.id} (past the border inset)`);
+        continue;
+      }
+      const gap = u(textInk.pxL - iconInk.pxR - 1);
+      const flag = gap < minIconGap ? ` ${ICON_GAP_FLAG}` : "";
+      lines.push(
+        `icon gap ${c.id}: ${gap}u between icon ${icon.cell.id} ink and the first glyph, minimum ${minIconGap}u${flag}`,
+      );
+      if (flag) under += 1;
+    }
+    lines.push(
+      pairs === 0
+        ? "icon gaps: no labelled box contains an image cell, so the sweep inspected nothing (vacuous, not green)"
+        : `icon gaps: ${pairs} pair(s) inspected, ${under} under the ${minIconGap}u minimum`,
+    );
   }
   return lines.join("\n");
 }

@@ -3,6 +3,44 @@
 Ordered by priority. Findings come from a full review of the CLI (2026-08-31). Every
 bug marked "reproduced" was confirmed by running the CLI against a planted fixture.
 
+- [x] `measure` reports the icon-ink-to-text gap and flags under-minimum pairs
+  - done: `--icon-gaps` sweep with `--min-icon-gap` (default 8), UNDER MINIMUM
+    flag driving exit code 1, saturation reported and flagged conservatively,
+    vacuity named. The first cut read 0u on every real pair (the box border
+    read as glyph ink, and the calibration's systematic offset pushed icon
+    ink past a 2u guard): fixed with the fitLine border peel on the text
+    window and a 6u guard band that absorbs sub-band gaps into the flag.
+    test/icon-gaps.mjs pins flagged/pass/tuner/vacuous/orphan-tuner on
+    synthetic bordered renders, npm test green, and the erc20-vault actor
+    map measures 9.0-11.0u across 7 pairs, exit 0.
+  - category: missing check (found by eye on the erc20-vault actor map: the
+    ERC20 Token box's icon ink touched its first glyph while every cell
+    constant was uniform and lint was green)
+  - description: the diagram style guide requires at least 8 model units of
+    clear space between an icon's rendered ink and its box's first text
+    glyph, judged on the render, and today only an eyeball enforces it. The
+    machinery exists in src/measure.js: the calibrated affine maps model to
+    pixels and ink scanning already finds cell extents. For a vertex whose
+    bounds contain an image-styled child cell, scan opaque pixels inside the
+    icon cell's pixel span and inside the remainder of the box, and print one
+    `icon gap:` line per pair giving the clear horizontal gap in model units.
+    A `--min-icon-gap` threshold (default 8) flags pairs under the minimum.
+    Vacuity guard per house style: when the model contains icon+text pairs
+    the check must inspect at least one, and a model with none reports the
+    check as vacuous rather than green. Static lint cannot carry this
+    exactly (SVG ink extents need rasterising), so it stays a rendered-pair
+    check; lint MAY gain a cheap approximation later (decoded payload ink
+    bounds against the calibrated text-width estimate) but never replaces
+    the pixel check.
+  - definition of done: `measure <file.drawio.png> --cell <box-id>` prints an
+    `icon gap:` line for a box with an embedded icon child, an under-minimum
+    pair is flagged loudly, a compliant pair passes, and the vacuous case is
+    named as vacuous. The skill's verify-after-render section gains the step.
+  - test: a fixture with two icon+text boxes, one authored with a generous
+    gap and one authored to touch: assert the touching pair is flagged and
+    the generous pair passes, plus a no-icon model asserting the vacuous
+    report.
+
 - [x] Detect compressed models in `lint` and `cells` instead of passing green
   - category: bug (silent false pass), reproduced
   - description: `readStoredXml` (src/cli.js) never uncompresses a deflate-compressed

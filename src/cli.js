@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import { extractMxfile, uncompressMxfile, hasCompressedDiagram, elideImagePayloads, decodeNumericEntities } from "./extract.js";
-import { measure } from "./measure.js";
+import { measure, ICON_GAP_FLAG } from "./measure.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
 import { loadRenderConfig } from "./config.js";
@@ -169,11 +169,15 @@ function runMeasure(input, options) {
   const gapIds = options.gaps ?? [];
   const cellIds = [...(options.cell ?? [])];
   const affine = options.affine === true;
+  const iconGaps = options.iconGaps === true;
+  if (options.minIconGap !== undefined && !iconGaps) {
+    fail("--min-icon-gap only tunes --icon-gaps: add --icon-gaps, or drop the flag");
+  }
   // A fit is a measurement plus a sizing verdict, so its cell is measured
   // whether or not --cell also names it.
   for (const id of fitIds) if (!cellIds.includes(id)) cellIds.push(id);
-  if (cellIds.length === 0 && gapIds.length === 0 && !affine) {
-    fail("measure needs at least one --cell <id>, --fit <id> or --gaps <id>, or --affine for the mapping alone");
+  if (cellIds.length === 0 && gapIds.length === 0 && !affine && !iconGaps) {
+    fail("measure needs at least one --cell <id>, --fit <id> or --gaps <id>, --icon-gaps for the sweep, or --affine for the mapping alone");
   }
   const config = loadRenderConfig(input);
   if (config.path !== null && (options.scale === undefined || options.border === undefined)) {
@@ -183,7 +187,15 @@ function runMeasure(input, options) {
   const border = options.border ?? config.border ?? 10;
   const raw = readFileSync(input);
   const xml = extractMxfile(raw);
-  console.log(measure(raw, xml, { cellIds, fitIds, gapIds, affine, scale, border, quietCalibration: options.quietCalibration === true }));
+  const report = measure(raw, xml, {
+    cellIds, fitIds, gapIds, affine, scale, border,
+    quietCalibration: options.quietCalibration === true,
+    iconGaps, minIconGap: options.minIconGap ?? 8,
+  });
+  console.log(report);
+  // A flagged icon gap is a style-guide violation: the report still prints in
+  // full, and the exit code makes the sweep scriptable as a gate.
+  if (iconGaps && report.includes(ICON_GAP_FLAG)) process.exitCode = 1;
 }
 
 /** Strips render input suffixes down to the base name shared by all outputs. */
@@ -401,6 +413,8 @@ program
   .addOption(valueOption("--fit <id>", "measure this cell and size its box to its ink (repeatable)", "--fit requires a cell id (got nothing)", collectId("--fit")))
   .addOption(valueOption("--gaps <id>", "report this cell's gaps to its neighbours (repeatable)", "--gaps requires a cell id (got nothing)", collectId("--gaps")))
   .option("--affine", "print the model-unit to pixel mapping this calibration implies")
+  .option("--icon-gaps", "sweep every labelled box containing an image cell and report the icon-ink-to-glyph gap")
+  .addOption(valueOption("--min-icon-gap <n>", "minimum gap in model units the --icon-gaps sweep flags under (default 8)", "--min-icon-gap requires a number", finiteNumber("--min-icon-gap")))
   .option("--quiet-calibration", "drop the calibration line and note, never the warning")
   .addOption(scaleOption("the scale the PNG was rendered at"))
   .addOption(borderOption("the border the PNG was rendered with"))

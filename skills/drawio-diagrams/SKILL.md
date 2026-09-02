@@ -197,6 +197,17 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    placement is unreliable in general): never pass 0, and always assert the output
    dimensions after a crop before trusting what you Read.
 
+0d. Icon-to-text gaps are measured, never squinted: after rendering a diagram whose
+   actor boxes embed icons, run `drawio-cli measure <file.drawio.png> --icon-gaps`.
+   It sweeps every labelled box containing an image cell and reports the clear gap
+   between the icon's rendered ink and the first glyph in model units, flags pairs
+   under the style guide's minimum (8u, tune with `--min-icon-gap`), and exits
+   nonzero on any flag. A saturation line means the gap could not be measured (a
+   true gap under the guard band, or a calibration shift past it): judge that pair
+   by crop before believing either way. A "vacuous, not green" line means the model
+   holds no icon+text pairs, so the sweep proved nothing. Fix a flagged pair by
+   widening its box (width is what buys the gap under centred text), then re-render
+   and re-run until the sweep exits clean.
 0b. For padding and box-hug questions, measure the rendered pixels instead of squinting:
    `drawio-cli measure <file.drawio.png> --cell <id>` reports each cell's ink extents and
    per-side padding in model units, with a calibration line carrying its own error bar.
