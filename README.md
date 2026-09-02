@@ -229,10 +229,46 @@ the test checked and see the renderer working with your own eyes.
 
 The repository carries a skill at `skills/drawio-diagrams` that teaches Claude Code to drive this
 CLI (extract, edit, render, verify) whenever a task touches draw.io files. To enable it globally
-while keeping it version controlled here, symlink it into your personal skills directory:
+while keeping it version controlled here, symlink it into your personal skills directory. From
+the root of this checkout:
 
 ```
-ln -sfn /Users/bernard/Projects/github.com/BRBussy/draw-io-cli/skills/drawio-diagrams ~/.claude/skills/drawio-diagrams
+ln -sfn "$(pwd)/skills/drawio-diagrams" ~/.claude/skills/drawio-diagrams
 ```
 
 A `git pull` in this checkout then updates the skill everywhere, with nothing copied.
+
+## Claude Code hook: no Write/Edit on draw.io files
+
+Diagram files carry embedded base64 icon payloads, so an agent that composes a
+`.drawio` file's content in its own output can exceed the per-response output-token
+cap and die mid-edit. The repository ships a PreToolUse hook,
+`hooks/deny-drawio-write.js`, that blocks any `Write`, `Edit` or `MultiEdit` tool call
+targeting a `.drawio`, `.drawio.png` or `.drawio.svg` file (exit code 2, with guidance
+pointing at the CLI's editing verbs and file-to-file scripts). Everything else passes
+through untouched, and malformed hook input fails open.
+
+Register it in `~/.claude/settings.json` so it protects every session, replacing
+`<repo-root>` with the absolute path of this repository checkout on your disc:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <repo-root>/hooks/deny-drawio-write.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The matcher also catches `MultiEdit` by substring. Hook configuration is captured at
+session start, so a newly registered hook applies from the next session. The guard's
+case table lives in `test/deny-drawio-write.mjs`, which `npm test` runs.

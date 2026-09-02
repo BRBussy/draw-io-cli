@@ -9,8 +9,11 @@ description: >
 
 # draw.io diagrams via drawio-cli
 
-The CLI lives beside this skill in its checkout: `/Users/bernard/Projects/github.com/BRBussy/draw-io-cli`.
-Run it as `node /Users/bernard/Projects/github.com/BRBussy/draw-io-cli/src/cli.js <command>` (or plain
+The CLI lives at the root of the repository this skill ships in: this skill directory is
+`skills/drawio-diagrams/` two levels below that root, and it is normally installed as a symlink
+under `~/.claude/skills/`, so resolve the symlink of this skill's own directory to find the
+checkout (`<repo-root>` below).
+Run it as `node <repo-root>/src/cli.js <command>` (or plain
 `drawio-cli` if it is on PATH via `npm link`). Before first use in a session, `... doctor` verifies the
 render path (the hediet.vscode-drawio extension's bundled webapp plus playwright Chromium) and names
 the fix for anything missing (`npm install` + `npx playwright install chromium` in the checkout).
@@ -30,6 +33,22 @@ retyped: an agent has died mid-task doing exactly that. Copy with `cp`, capture 
 redirection, and transform with scripts that read the source file and write the destination
 file, printing only short confirmations (counts, asserts). Never paste file regions into
 heredocs, Edit/Write calls, or your own messages.
+
+A third hard constraint, mechanically enforced: NEVER call the Write or Edit tools on a
+`.drawio`, `.drawio.png` or `.drawio.svg` file. Every change goes through a drawio-cli
+editing verb or a helper script that reads the file from disk and writes it back — the
+file's bytes travel disk-to-disk, and your output scales with the DESCRIPTION of the
+change, never with the file. A response that starts emitting diagram XML is already the
+failure (a 64k output-token death mid-Write), even when one big Write feels like the
+direct path. A PreToolUse hook (`hooks/deny-drawio-write.js` in the CLI checkout, wired
+in `~/.claude/settings.json`) rejects such calls outright: hitting it means switch
+mechanism, not retry. Typing short NEW cell values (a circuit label, a note's text)
+inside a small script is fine; reproducing existing cells, styles en masse, or payloads
+is not — script those from the file itself.
+
+Batch discipline for larger edits: one concern per edit batch (renames, then new rows,
+then geometry, then icons, then edges), `lint` between batches, and each of your own
+responses stays a few sentences plus tool calls.
 
 ## Reading a diagram
 
