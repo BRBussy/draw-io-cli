@@ -13,8 +13,11 @@ npm install
 npx playwright install chromium
 ```
 
-Installing the package globally exposes the `drawio-cli` binary. The examples below run
-the CLI straight from the repository.
+To use the CLI by hand from anywhere as plain `drawio-cli` (for example
+`drawio-cli render diagram.drawio` after hand-tidying a layout, or
+`drawio-cli curate diagram.drawio`), run `npm link` once from the root of this
+checkout: it exposes the binary through the package's `bin` entry. The examples below
+run the CLI straight from the repository instead.
 
 ## Commands
 
@@ -193,6 +196,33 @@ string, image payloads elided. A page stored compressed is expanded first, as it
 
 ```
 node src/cli.js styles diagram.drawio
+```
+
+### curate
+
+Marks a `.drawio` as hand-tidied, in place, by inserting an inert marker cell
+(id `curated`, no geometry, renders nothing, survives editor and render round-trips
+into the PNG's embedded model). Agents recognise the marker and change only what a
+task names: layout decisions they were not asked to touch are the curator's, never
+defects to fix. Marking is idempotent, `--off` removes the marker, and both print the
+resulting state. Re-render the pair afterwards so the PNG carries the same state.
+`cells` and `lint` print a CURATED banner whenever the marker is present.
+
+```
+drawio-cli curate diagram.drawio
+drawio-cli curate diagram.drawio --off
+```
+
+### guard-diff
+
+Verifies an edit stayed inside its mandate. Given the file as it was before the edit
+and the file after, it reports every cell whose value, style, parent, geometry,
+waypoints or label offset changed, and every cell added or removed. Ids passed with
+`--allow` may change freely, anything else that changed is a violation and fails the
+run. With no `--allow` at all it is a strict nothing-may-change check.
+
+```
+drawio-cli guard-diff baseline.drawio edited.drawio --allow box-a --allow wire-3
 ```
 
 ### doctor

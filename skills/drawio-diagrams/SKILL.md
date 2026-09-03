@@ -50,6 +50,33 @@ Batch discipline for larger edits: one concern per edit batch (renames, then new
 then geometry, then icons, then edges), `lint` between batches, and each of your own
 responses stays a few sentences plus tool calls.
 
+## Curated diagrams (NEVER BREAK)
+
+A diagram carrying the curation marker (an inert cell id="curated"; `cells` and `lint`
+print a CURATED banner for it, and the marker rides inside a rendered pair's embedded
+model too) has a hand-tidied layout. On such a diagram you are a surgeon, not a
+gardener:
+
+- Change ONLY the cells the task names, plus changes the task logically forces (each
+  one justified in your report). No reflows, no normalisation, no re-seating, no
+  "while I'm here" fixes of any kind.
+- Run `lint` BEFORE your first edit and keep the output. Findings present at baseline
+  are the curator's standing decisions: report them if notable, NEVER fix them
+  unbidden. After editing, only findings your own edit introduced are yours to fix.
+- Prove the mandate mechanically: `cp` the file to your scratchpad before editing,
+  and before finishing run
+  `drawio-cli guard-diff <baseline> <edited> --allow <id> [--allow <id> ...]`
+  with exactly the ids your task authorised. It convicts every value, style,
+  geometry, waypoint or label-offset change outside the allow-list, and any cell
+  added or removed. A nonzero exit means revert the trespass, never widen the
+  allow-list to cover it.
+- Never remove the marker (`guard-diff` counts that as a violation too). Only the
+  curator runs `curate --off`.
+
+`drawio-cli curate <file.drawio>` marks a diagram (idempotent), `--off` unmarks.
+After marking or unmarking, re-render the pair so the PNG's embedded model carries
+the same state.
+
 ## Reading a diagram
 
 START with the built-in reports instead of scripting XML dumps:
@@ -88,6 +115,8 @@ judge visual layout.
 
 ## Editing or creating
 
+0a. Check for the curation marker FIRST (the `cells` banner): a curated diagram is
+   under the surgical rules above, baseline copy and `guard-diff` proof included.
 0. For geometry, waypoints and label offsets, prefer the in-place editing verbs over hand
    regex surgery — they splice the file's own bytes (serialisation preserved), verify the
    parsed result, and fail loudly on a missing or duplicate id:

@@ -11,6 +11,7 @@ import { lint } from "./lint.js";
 import { cellsReport, cellXml, stylesReport } from "./cells.js";
 import { setGeometry, setWaypoints, setLabelOffset, verifyEdit } from "./edit.js";
 import { diffCells } from "./diff.js";
+import { setCurated, isCurated, curatedBanner, guardDiff } from "./curate.js";
 
 function fail(message) {
   console.error(message);
@@ -273,7 +274,10 @@ function runCells(input, options) {
   const elide = options.elideImages === true;
   if (options.xml === undefined) {
     if (elide) fail("--elide-images belongs to cells --xml <id>: the cells table always elides image payloads");
-    console.log(cellsReport(readModelXml(input), { full }));
+    const xml = readModelXml(input);
+    const banner = curatedBanner(xml);
+    if (banner) console.error(banner);
+    console.log(cellsReport(xml, { full }));
     return;
   }
   if (full) fail("--full and --xml are different reports: --xml prints one cell's source bytes, never truncated");
@@ -287,8 +291,16 @@ function runCells(input, options) {
 }
 
 function runLint(input, options) {
-  const { errors, warnings, notes } = lint(readModelXml(input));
+  const model = readModelXml(input);
+  const banner = curatedBanner(model);
+  if (banner) console.error(banner);
+  const { errors, warnings, notes } = lint(model);
   for (const n of notes) console.error(`note: ${n}`);
+  if (banner && notes.length + warnings.length + errors.length > 0) {
+    console.error(
+      "curated: findings above that your edit did not introduce are the curator's decisions: report them, never fix them unbidden",
+    );
+  }
   for (const w of warnings) console.error(`warning: ${w}`);
   for (const e of errors) console.error(`error: ${e}`);
   const failing = errors.length + (options.strict ? warnings.length : 0);
@@ -308,6 +320,32 @@ function finishEdit(input, edited, id, expect) {
   verifyEdit(edited, id, expect);
   writeOutput(input, edited);
   console.error("edited in place: re-render the pair before committing");
+}
+
+function runCurate(input, options) {
+  const xml = readEditable(input);
+  if (hasCompressedDiagram(xml)) {
+    fail("compressed model: run extract first, then curate the uncompressed file");
+  }
+  const on = options.off !== true;
+  const edited = setCurated(xml, on);
+  if (edited === xml) {
+    console.log(on ? "already curated, nothing to do" : "not curated, nothing to remove");
+    return;
+  }
+  if (isCurated(edited) !== on) fail("verification failed: the marker did not land, nothing was written");
+  writeOutput(input, edited);
+  console.log(
+    on
+      ? "curated: agents now change only what a task names on this diagram (re-render the pair so the PNG's embedded model carries the marker)"
+      : "curation removed (re-render the pair)",
+  );
+}
+
+function runGuardDiff(baseline, edited, options) {
+  const { lines, violations } = guardDiff(readModelXml(baseline), readModelXml(edited), options.allow ?? []);
+  for (const line of lines) console.log(line);
+  if (violations > 0) process.exit(1);
 }
 
 /**
@@ -447,6 +485,21 @@ program
   .argument("<dx>", "offset x in model units")
   .argument("<dy>", "offset y in model units")
   .action(runSetLabelOffset);
+
+program
+  .command("curate")
+  .description("mark a .drawio as hand-tidied so agents change only what a task names (idempotent; --off unmarks)")
+  .argument("<input.drawio>", "the .drawio source to mark, in place")
+  .option("--off", "remove the curation marker")
+  .action(runCurate);
+
+program
+  .command("guard-diff")
+  .description("verify an edit stayed inside its mandate: every changed cell must be on the allow-list")
+  .argument("<baseline>", "the model before the edit (.drawio, .drawio.png or .drawio.svg)")
+  .argument("<edited>", "the model after the edit")
+  .addOption(valueOption("--allow <id>", "cell id permitted to change (repeatable; none means nothing may change)", "--allow requires a cell id (got nothing)", collectId("--allow")))
+  .action(runGuardDiff);
 
 program
   .command("diff-cells")

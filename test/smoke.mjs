@@ -85,6 +85,29 @@ try {
   assert.match(svg, /<svg\b[^>]*\scontent="/, "SVG root lacks the embedded content attribute");
   assert.ok(!svg.includes("img/lib/"), "SVG export references img/lib/ instead of inlined data URIs");
 
+  // The curation marker must survive the webapp's render round-trip: it is an
+  // inert cell in the model, and a webapp that dropped it would both strip the
+  // curated state from the PNG's embedded model and trip the cell-count guard.
+  // It must also change nothing visible: same export dimensions as unmarked.
+  const curatedSrc = join(dir, "curated.drawio");
+  writeFileSync(curatedSrc, HELLO_DRAWIO);
+  run(["curate", curatedSrc]);
+  run(["render", curatedSrc, "--png"]);
+  const curatedPng = readFileSync(join(dir, "curated.drawio.png"));
+  const embedded = run(["extract", join(dir, "curated.drawio.png"), "-o", join(dir, "curated-roundtrip.drawio")]);
+  assert.ok(embedded, "extract of the curated render failed");
+  assert.match(
+    readFileSync(join(dir, "curated-roundtrip.drawio"), "utf8"),
+    /id="curated"[^>]*value="CURATED:/,
+    "the curation marker must survive the render round-trip into the PNG's embedded model",
+  );
+  const dims = (buffer) => `${buffer.readUInt32BE(16)}x${buffer.readUInt32BE(20)}`;
+  assert.equal(
+    dims(curatedPng),
+    dims(png),
+    "the marker must not change the rendered dimensions",
+  );
+
   // Egress block: an html=1 label carries arbitrary markup, so a hostile
   // diagram can point the browser at a remote host while it renders. Chromium
   // really does attempt the fetch below, and the blocked line asserted here is
