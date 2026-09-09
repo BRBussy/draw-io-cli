@@ -6,6 +6,7 @@ import { extractMxfile, uncompressMxfile, hasCompressedDiagram, elideImagePayloa
 import { measure, ICON_GAP_FLAG } from "./measure.js";
 import { renderDiagram, selectPage } from "./render.js";
 import { doctor } from "./doctor.js";
+import { installAssets } from "./install-assets.js";
 import { loadRenderConfig } from "./config.js";
 import { lint } from "./lint.js";
 import { cellsReport, cellXml, stylesReport } from "./cells.js";
@@ -228,7 +229,7 @@ async function runRender(input, options) {
   const formats = [];
   if (png !== null) formats.push("xmlpng");
   if (svg !== null) formats.push("xmlsvg");
-  const results = await renderDiagram(xml, { formats, scale, border });
+  const results = await renderDiagram(xml, { formats, scale, border, webapp: options.webapp });
   const cellCount = (text) => (String(text).match(/<mxCell[\s>]/g) ?? []).length;
   const inputCells = cellCount(xml);
   for (const format of formats) {
@@ -409,6 +410,7 @@ program
 
 program
   .command("render")
+  .option("--webapp <path>", "explicit draw.io webapp directory, with no fallback")
   .description("render a diagram to PNG and/or SVG with the model embedded")
   .argument("<input.drawio>", "a .drawio, .drawio.png or .drawio.svg file")
   .option("--png [path]", "write a PNG, at this path when given (the default with neither format)")
@@ -510,10 +512,18 @@ program
 
 program
   .command("doctor")
-  .description("check the render path: the extension webapp, the playwright package and its Chromium build")
-  .action(async () => {
-    process.exit(await doctor());
+  .description("check webapp assets, the playwright package and its Chromium executable")
+  .option("--webapp <path>", "explicit draw.io webapp directory, with no fallback")
+  .action(async (options) => {
+    process.exit(await doctor(options));
   });
+
+program
+  .command("install-assets")
+  .description("install pinned standalone draw.io webapp assets locally")
+  .option("--archive <path>", "use a downloaded archive, checked against the pinned digest")
+  .option("--directory <path>", "asset installation directory")
+  .action(installAssets);
 
 program.parseAsync(process.argv).catch((error) => {
   fail(error instanceof Error ? error.message : String(error));

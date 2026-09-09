@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse hook: reject Write/Edit tool calls that target a draw.io file.
+// Claude Code PreToolUse hook: reject Write/Edit calls targeting a draw.io file.
 //
 // Diagram files carry embedded base64 payloads, so composing their content in
 // model output dies on the per-response output-token cap. This hook turns that

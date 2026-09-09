@@ -3,22 +3,21 @@ import { locateWebapp } from "./webapp.js";
 import { loadChromium, PLAYWRIGHT_INSTALL_FIX } from "./playwright.js";
 
 /**
- * Reports whether a full render path works on this machine: the extension
- * webapp, the playwright package and its Chromium build. Resolves to 0 when
- * all are found, 1 otherwise, naming each missing piece and its fix.
+ * Checks asset structure and executable presence. A real render is required
+ * to establish that the browser launches and the webapp exports a model.
  */
-export async function doctor() {
+export async function doctor(options = {}) {
   let ok = true;
 
-  const webapp = locateWebapp();
+  const webapp = locateWebapp(options);
   if (webapp === null) {
     ok = false;
     console.error(
-      "extension webapp: NOT FOUND under ~/.vscode/extensions or ~/.cursor/extensions",
+      "webapp assets: NOT FOUND in the checkout or installed extensions",
     );
-    console.error("  fix: install the hediet.vscode-drawio extension in VS Code or Cursor");
+    console.error("  fix: run drawio-cli install-assets or install the hediet.vscode-drawio extension");
   } else {
-    console.log(`extension webapp: ${webapp}`);
+    console.log(`webapp assets: ${webapp}`);
   }
 
   const chromium = await loadChromium();
@@ -37,7 +36,7 @@ export async function doctor() {
     if (executable === null || executable === "" || !existsSync(executable)) {
       ok = false;
       console.error("playwright chromium: NOT FOUND");
-      console.error("  fix: run npx playwright install chromium");
+      console.error("  fix: ask your administrator to provision the matching Playwright Chromium and OS libraries");
     } else {
       console.log(`playwright chromium: ${executable}`);
     }
