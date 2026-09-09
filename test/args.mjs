@@ -512,7 +512,7 @@ try {
     const sick = invokeWithoutPlaywright(["doctor"]);
     assert.equal(sick.status, 1, `doctor must exit 1 without playwright, got ${sick.status}\n${sick.stderr}`);
     assert.ok(
-      sick.stderr.includes("playwright package: NOT INSTALLED") && sick.stderr.includes("npm install"),
+      sick.stderr.includes("playwright package: NOT INSTALLED") && sick.stderr.includes("npm ci --ignore-scripts --cache .task-evidence/npm-cache"),
       `doctor must name the missing package and its fix, got:\n${sick.stderr}`,
     );
     passed += 1;

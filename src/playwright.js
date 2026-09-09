@@ -1,4 +1,4 @@
-export const PLAYWRIGHT_INSTALL_FIX = "run npm install in the drawio-cli checkout";
+export const PLAYWRIGHT_INSTALL_FIX = "run npm ci --ignore-scripts --cache .task-evidence/npm-cache in the drawio-cli checkout";
 
 /**
  * Resolves to playwright's chromium driver, or null when the package is not

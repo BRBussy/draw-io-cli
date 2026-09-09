@@ -1,2 +1,4 @@
 node_modules
+.task-evidence/
+.drawio-assets/
 test/*-test-result.drawio.*

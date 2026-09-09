@@ -1,6 +1,24 @@
-import { readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, existsSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+export const STANDALONE_WEBAPP = fileURLToPath(new URL("../.drawio-assets/extension/drawio/src/main/webapp", import.meta.url));
+
+/** The bootstrap requires this script set and the embed application's globals. */
+export function validateWebapp(path) {
+  for (const file of ["js/app.min.js", "js/PreConfig.js", "js/PostConfig.js", "js/extensions.min.js", "js/stencils.min.js", "js/shapes-14-6-5.min.js", "styles/grapheditor.css"]) {
+    const target = join(path, file);
+    if (!existsSync(target) || !statSync(target).isFile() || statSync(target).size === 0) {
+      throw new Error(`webapp missing or empty ${file}: ${path}`);
+    }
+  }
+  const app = readFileSync(join(path, "js/app.min.js"), "utf8");
+  if (!app.includes("App.main=") || !app.includes("Menus.prototype") || !app.includes("EditorUi.VERSION=")) {
+    throw new Error(`incompatible webapp bootstrap API: ${path}`);
+  }
+  return path;
+}
 
 /**
  * Directories searched for installed hediet.vscode-drawio extensions.
@@ -11,14 +29,19 @@ function extensionRoots() {
 }
 
 /**
- * Locates the draw.io webapp bundled inside the hediet.vscode-drawio
- * extension. Returns the absolute webapp path, or null when no install
- * is found. When several versions are installed the highest directory
- * name wins.
+ * Explicit selections are authoritative, including failures. The checkout's
+ * standalone assets precede extensions, whose directory versions sort numerically.
+ * A present but incomplete installation is an error, never a silent fallback.
  */
-export function locateWebapp() {
+export function locateWebapp({ webapp, env = process.env, standalone = STANDALONE_WEBAPP, roots = extensionRoots() } = {}) {
+  const explicit = webapp ?? env.DRAWIO_WEBAPP;
+  if (explicit !== undefined) {
+    if (explicit.trim() === "") throw new Error("explicit webapp path is empty");
+    return validateWebapp(resolve(explicit));
+  }
+  if (existsSync(standalone)) return validateWebapp(resolve(standalone));
   const candidates = [];
-  for (const root of extensionRoots()) {
+  for (const root of roots) {
     let entries;
     try {
       entries = readdirSync(root);
@@ -28,11 +51,11 @@ export function locateWebapp() {
     for (const entry of entries) {
       if (!entry.startsWith("hediet.vscode-drawio-")) continue;
       const webapp = join(root, entry, "drawio", "src", "main", "webapp");
-      if (existsSync(join(webapp, "js", "app.min.js"))) candidates.push(webapp);
+      candidates.push({ webapp, version: entry.slice("hediet.vscode-drawio-".length) });
     }
   }
-  candidates.sort();
-  return candidates.at(-1) ?? null;
+  candidates.sort((a, b) => a.version.localeCompare(b.version, "en", { numeric: true }) || a.webapp.localeCompare(b.webapp, "en"));
+  return candidates.length ? validateWebapp(resolve(candidates.at(-1).webapp)) : null;
 }
 
 /**

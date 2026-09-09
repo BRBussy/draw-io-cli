@@ -1,23 +1,85 @@
 # draw-io-cli
 
-Extract and render draw.io diagrams from the command line. Rendering drives the draw.io
-web app bundled inside the [hediet.vscode-drawio](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio)
-VS Code extension with headless Chromium, fully offline.
+Extract, edit and render draw.io diagrams from the command line, with Claude Code
+and Codex integration. Rendering runs local draw.io webapp assets in headless
+Chromium. Assets can come from a standalone installation or an installed
+[hediet.vscode-drawio](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio)
+extension for VS Code or Cursor. After installation, rendering works offline.
+
+![CLI, standalone and editor asset routes, browser and editable outputs](docs/architecture.drawio.png)
+
+[Editable architecture source](docs/architecture.drawio) · [SVG export](docs/architecture.drawio.svg)
 
 ## Install
 
-Requires Node >= 20 and the hediet.vscode-drawio extension installed in VS Code or Cursor.
+Run these commands from the checkout root. Node >= 20, a Playwright-compatible
+Chromium executable and its OS libraries are prerequisites. On a managed Linux
+server, the administrator supplies the runtime and browser, including
+`PLAYWRIGHT_BROWSERS_PATH` when the browser is in a managed location. The standalone
+asset installer also requires `unzip`. It does not install browsers or OS packages.
 
 ```
-npm install
-npx playwright install chromium
+npm ci --ignore-scripts --cache .task-evidence/npm-cache
+node src/cli.js install-assets
+node src/cli.js doctor
+node src/cli.js render docs/architecture.drawio --png --svg
 ```
 
-To use the CLI by hand from anywhere as plain `drawio-cli` (for example
-`drawio-cli render diagram.drawio` after hand-tidying a layout, or
-`drawio-cli curate diagram.drawio`), run `npm link` once from the root of this
-checkout: it exposes the binary through the package's `bin` entry. The examples below
-run the CLI straight from the repository instead.
+The CLI dependencies, npm cache and webapp assets remain in this checkout.
+`doctor` checks assets, the Playwright package and the browser executable's
+presence. The render command actually launches the browser and exports a diagram.
+Report missing managed prerequisites to the administrator with the failing output.
+
+For a laptop with the editor extension already installed, omit `install-assets`
+to use extension discovery. The editor remains separate from the headless CLI.
+The Linux extension-asset route is tested, but an interactive laptop/editor
+session has not been validated.
+
+For an optional project-local command link, run once from the checkout root:
+
+```
+mkdir -p .task-evidence/cli-prefix/bin
+ln -s ../../../src/cli.js .task-evidence/cli-prefix/bin/drawio-cli
+.task-evidence/cli-prefix/bin/drawio-cli doctor
+```
+
+The link points at this checkout, so the CLI finds its own dependencies and assets.
+Add that `bin` directory to your shell's PATH if you want to invoke `drawio-cli`
+without the relative prefix. No system-wide or user-level installation is needed.
+
+### Asset selection and recovery
+
+Both `render` and `doctor` select assets in this order:
+
+1. The explicit `--webapp` directory.
+2. The `DRAWIO_WEBAPP` environment variable.
+3. This checkout's `.drawio-assets/extension/drawio/src/main/webapp` directory.
+4. Installed VS Code/Cursor extensions, comparing their version suffixes numerically.
+   Equal versions use the full path as a deterministic tie-breaker.
+
+Explicit paths must name the webapp directory, not the archive or extension root.
+An empty or invalid explicit selection fails without fallback. A selected payload
+with missing scripts or an incompatible bootstrap API also fails. To select an
+editor webapp when standalone assets are present, supply its webapp directory
+explicitly. Rendering and diagnostics use the same resolver.
+
+`install-assets` pins extension 1.9.0 and draw.io 26.0.2, verifies SHA-256 before
+extraction and retains upstream licences. Repeating installation replaces a
+recognised installation through a staging directory. Failed downloads, integrity
+checks, missing prerequisites and extraction failures preserve the preceding
+installation. An unrecognised destination is refused. See
+[asset provenance and recovery](docs/assets-provenance.md) for the digest,
+verification method, licence inventory and interrupted-installation handling.
+
+For offline installation, save the pinned, HTTP-decoded VSIX at
+`.task-evidence/drawio-decoded.vsix`, then run:
+
+```
+node src/cli.js install-assets --archive .task-evidence/drawio-decoded.vsix --directory .task-evidence/assets
+```
+
+This custom destination requires explicit selection of its
+`extension/drawio/src/main/webapp` subdirectory through `--webapp` or `DRAWIO_WEBAPP`.
 
 ## Commands
 
@@ -245,7 +307,8 @@ checkout that has never installed it. Without it `doctor` names the missing pack
 npm test
 ```
 
-Runs three suites, cheapest first. The lint-violations suite (`test/lint-violations.mjs`)
+Checks asset selection, installation, lint, arguments, hooks, icon gaps, curation and
+rendering. The lint-violations suite (`test/lint-violations.mjs`)
 plants a violation for every lint check and asserts it fires, with a clean control beside
 it that must stay quiet. The argument-parsing suite (`test/args.mjs`) covers every verb's
 flags, positionals and refusals, and re-runs the static verbs with playwright made
@@ -255,7 +318,19 @@ Each run also leaves its rendered exports in `test/` as gitignored artifacts nam
 `smoke-<timestamp>-test-result.drawio.png` / `.drawio.svg`, so you can open the hello world
 the test checked and see the renderer working with your own eyes.
 
-## Claude Code skill
+## Codex and Claude Code skills
+
+Codex discovers the regular file `.agents/skills/drawio-diagrams/SKILL.md`, whose
+relative link loads the shared workflow at `skills/drawio-diagrams/SKILL.md`.
+Start Codex in this checkout and ask it to use the
+`drawio-diagrams` skill to inspect, edit or render a diagram. The skill tells
+Codex how to locate the CLI, diagnose prerequisites, edit files and verify exports.
+This follows [Codex repository skill discovery](https://learn.chatgpt.com/docs/build-skills).
+Discovery and CLI execution were exercised in a native Codex worker using
+gpt-6-astra with medium reasoning effort.
+
+Codex follows the skill's file-to-file editing instructions. The PreToolUse hook
+below is specific to Claude Code and does not enforce those instructions in Codex.
 
 The repository carries a skill at `skills/drawio-diagrams` that teaches Claude Code to drive this
 CLI (extract, edit, render, verify) whenever a task touches draw.io files. To enable it globally

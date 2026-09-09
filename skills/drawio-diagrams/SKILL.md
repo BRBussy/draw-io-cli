@@ -10,20 +10,26 @@ description: >
 # draw.io diagrams via drawio-cli
 
 The CLI lives at the root of the repository this skill ships in: this skill directory is
-`skills/drawio-diagrams/` two levels below that root, and it is normally installed as a symlink
-under `~/.claude/skills/`, so resolve the symlink of this skill's own directory to find the
-checkout (`<repo-root>` below).
+`skills/drawio-diagrams/` two levels below that root. Codex's regular-file entry at
+`.agents/skills/drawio-diagrams/SKILL.md` loads this shared workflow. Claude Code can
+use a symlink under `~/.claude/skills/`. Resolve this shared skill's own directory
+(following any Claude symlink), then go up two levels to find the checkout
+(`<repo-root>` below). The Codex entry directory is three levels below the root.
 Run it as `node <repo-root>/src/cli.js <command>` (or plain
-`drawio-cli` if it is on PATH via `npm link`). Before first use in a session, `... doctor` verifies the
-render path (the hediet.vscode-drawio extension's bundled webapp plus playwright Chromium) and names
-the fix for anything missing (`npm install` + `npx playwright install chromium` in the checkout).
-To see the render path working with your own eyes, run `npm test` in the checkout and Read the
+`drawio-cli` if it is on PATH via a project-local link). Before first use in a session, run
+`doctor` to check assets, the Playwright package and the browser executable. It does not
+launch the browser. Rendering selects `--webapp`, then `DRAWIO_WEBAPP`, then the checkout's
+standalone assets, then the VS Code/Cursor extension. An invalid explicit selection fails.
+Restore locked dependencies locally with `npm ci --ignore-scripts` and install standalone
+webapp assets with `node src/cli.js install-assets` in the checkout when authorised.
+The browser, runtime and OS libraries are managed prerequisites. Report missing capability
+to the operator. To exercise rendering, run `npm test` in the checkout and inspect the
 newest `test/smoke-*-test-result.drawio.png` it leaves behind (gitignored) as an image.
 
 ## Hard constraint on helper scripts
 
 Every helper script in this workflow uses the Python or Node STANDARD LIBRARY plus tools
-already on the machine (`sips` for image downscaling and cropping). NEVER install a package
+already on the machine. Use the agent's image viewer to inspect rendered output. NEVER install a package
 into any global or user-level environment (`pip install`, `pip install --user`, `npm -g`):
 if stdlib plus system tools cannot do it, report that as friction instead of installing.
 
@@ -34,15 +40,16 @@ redirection, and transform with scripts that read the source file and write the 
 file, printing only short confirmations (counts, asserts). Never paste file regions into
 heredocs, Edit/Write calls, or your own messages.
 
-A third hard constraint, mechanically enforced: NEVER call the Write or Edit tools on a
+A third hard constraint: NEVER call Write, Edit or apply_patch tools on a
 `.drawio`, `.drawio.png` or `.drawio.svg` file. Every change goes through a drawio-cli
 editing verb or a helper script that reads the file from disk and writes it back — the
 file's bytes travel disk-to-disk, and your output scales with the DESCRIPTION of the
 change, never with the file. A response that starts emitting diagram XML is already the
 failure (a 64k output-token death mid-Write), even when one big Write feels like the
-direct path. A PreToolUse hook (`hooks/deny-drawio-write.js` in the CLI checkout, wired
-in `~/.claude/settings.json`) rejects such calls outright: hitting it means switch
-mechanism, not retry. Typing short NEW cell values (a circuit label, a note's text)
+direct path. The Claude Code PreToolUse hook (`hooks/deny-drawio-write.js`, wired
+in `~/.claude/settings.json`) enforces this for Claude Code. Codex follows these skill
+instructions without that Claude-specific hook. A hook refusal means switch mechanism,
+not retry. Typing short NEW cell values (a circuit label, a note's text)
 inside a small script is fine; reproducing existing cells, styles en masse, or payloads
 is not — script those from the file itself.
 
@@ -110,8 +117,9 @@ drawio-cli extract <file.drawio.png>     # or .drawio.svg; writes <file>.drawio 
 
 The XML gives every cell exactly: labels (`value`), containment (`parent` chains into swimlanes),
 geometry, styles, and every edge's `source`/`target`. Answer structural questions from the XML,
-and use a downscaled raster (`sips -Z 1600 in.png --out small.png`, then Read small.png) only to
-judge visual layout.
+and use the agent's image viewer on the PNG to judge visual layout. In Codex, use
+`view_image` with the rendered file's path. The viewer can display the original PNG
+without a separate image-processing command.
 
 ## Editing or creating
 
@@ -130,10 +138,17 @@ drawio-cli set-label-offset <file.drawio> <id> -78 0
    Values are written verbatim: geometry x/y are PARENT-RELATIVE model units (the `cells`
    table prints absolute positions — subtract the parent chain before setting). After any
    edit batch, re-render the pair.
-0b. Concurrent-editor guard: hash the target `.drawio` (e.g. `md5 -q`) before and after every
+0b. Concurrent-editor guard: hash the target `.drawio` before and after every
    edit batch, and re-check just before finishing. An open draw.io editor can re-serialise
    the file under you (cell order rewritten, waypoints collapsed) and a stale buffer can save
-   over finished work; only the hash comparison catches it.
+   over finished work. Compare the post-edit hash with the final hash to detect an
+   intervening write. Node's standard library supplies portable SHA-256 hashing.
+   From the checkout root, this example hashes the architecture source. Replace its
+   final argument with the target diagram's path:
+
+```sh
+node -e 'const fs = require("node:fs"), crypto = require("node:crypto"); console.log(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' docs/architecture.drawio
+```
 0c. `drawio-cli diff-cells <a> <b>` compares two models cell-level (ids, values, styles —
    geometry excluded): the membership-proof primitive. A style delta confined to
    exit/entry anchor tokens is named "edge re-anchored", the silent way an inherited
@@ -153,11 +168,13 @@ drawio-cli set-label-offset <file.drawio> <id> -78 0
      attributes and escape inner quotes as `&quot;` (beware `xml.sax.saxutils.quoteattr`,
      which switches to single quotes when the value contains `"`).
 6. A `dashed=1` text shape renders as a borderless note, the intended look for behaviour notes.
-7. Round-trip comparisons (extracted PNG model vs source) are cell-level, never byte-level:
-   `extract --decode-entities` restores apostrophes and friends (&#39;) to their source
-   spelling so greps against the extracted model match, keeping structural entities encoded.
-   the webapp re-serialises, adding host/agent/version to mxfile and dropping zero-valued
-   coordinates. Compare cell ids and attributes, not bytes.
+7. Round-trip comparisons use raw extraction from PNG or SVG, with neither
+   `--decode-entities` nor `--elide-images`. Parse the source and extracted XML and compare
+   cell ids, parsed labels, styles, connections, geometry and waypoints. Account for
+   omitted zero-valued coordinates. The webapp can change serialisation and document
+   metadata, so byte equality and greps of entity spellings do not prove preservation.
+   Optional `--decode-entities` can change multiline attribute values when the extracted
+   XML is parsed. Keep it out of semantic comparisons and editable round trips.
 
 ## Rendering
 
@@ -222,9 +239,9 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    no static check can see it. Z-order bites shapes the same way: a filled shape paints over
    any cell declared before it, so an icon embedded in a box must be declared AFTER the
    box or it renders invisible. Only the eyeball pass catches this.
-7. `sips --cropOffset` silently leaves the file uncropped when passed a 0 offset (and its
-   placement is unreliable in general): never pass 0, and always assert the output
-   dimensions after a crop before trusting what you Read.
+7. Inspect the rendered PNG with the agent's image viewer. If an available tool creates
+   a crop for closer inspection, verify the crop's dimensions and contents before
+   relying on it. Keep the full image available to check overall layout.
 
 0d. Icon-to-text gaps are measured, never squinted: after rendering a diagram whose
    actor boxes embed icons, run `drawio-cli measure <file.drawio.png> --icon-gaps`.
@@ -254,9 +271,9 @@ drawio-cli render <file.drawio> --page <name|i> --scale <n> --border <n>
    stay visible on each side of the knockout, under 20u flagged as an orphaned stub.
    `--fit <id>` peels a stroked shape's border before sizing (so a hexagon's slanted border
    is not counted as text ink) and names any declared spacing tokens the delta restates.
-1. Downscale the PNG and Read it as an image. Check labels, arrows, and that no broken-image
+1. Open the PNG with the agent's image viewer. Check labels, arrows, and that no broken-image
    placeholders appear.
-2. `drawio-cli extract` the PNG and confirm the round-tripped XML still contains the labels you
-   changed (grep the exact strings).
+2. Use raw `drawio-cli extract` on each delivered PNG/SVG and compare parsed model semantics
+   with the source as described above, including the labels you changed.
 3. If the target repo defines diagram label conventions (in its AGENTS.md or a check script),
    run its checks before finishing.
