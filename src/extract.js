@@ -98,14 +98,14 @@ export function elideImagePayloads(xml) {
 /**
  * Decodes numeric character references (&#39; and friends) so byte-level
  * greps match the source spelling. Structural characters (quote, ampersand,
- * angle brackets) stay encoded, keeping the XML well-formed.
+ * angle brackets) and whitespace subject to XML normalisation stay encoded.
  */
 export function decodeNumericEntities(xml) {
-  const structural = new Set([34, 38, 60, 62]);
+  const preserved = new Set([9, 10, 13, 34, 38, 60, 62]);
   return xml.replace(/&#x?[0-9a-fA-F]+;/g, (whole) => {
     const decoded = he.decode(whole);
     // A reference he leaves standing still opens with "&", itself structural,
     // so an unreadable one keeps its source spelling.
-    return structural.has(decoded.codePointAt(0)) ? whole : decoded;
+    return preserved.has(decoded.codePointAt(0)) ? whole : decoded;
   });
 }

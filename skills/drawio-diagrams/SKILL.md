@@ -173,8 +173,9 @@ node -e 'const fs = require("node:fs"), crypto = require("node:crypto"); console
    cell ids, parsed labels, styles, connections, geometry and waypoints. Account for
    omitted zero-valued coordinates. The webapp can change serialisation and document
    metadata, so byte equality and greps of entity spellings do not prove preservation.
-   Optional `--decode-entities` can change multiline attribute values when the extracted
-   XML is parsed. Keep it out of semantic comparisons and editable round trips.
+   Optional `--decode-entities` preserves numeric tab, line-feed and carriage-return
+   references so XML parsing retains multiline attribute values. Safe numeric characters
+   such as apostrophes are decoded for readability.
 
 ## Rendering
 
