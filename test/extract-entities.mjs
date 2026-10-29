@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
 import { decodeNumericEntities } from "../src/extract.js";
+import { chromiumLaunchOptions } from "../src/playwright.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const evidence = ".task-evidence/extract-entities";
@@ -14,7 +15,7 @@ function run(args) {
   assert.equal(result.status, 0, result.stderr);
 }
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const browser = await chromium.launch();
+const browser = await chromium.launch(chromiumLaunchOptions());
 try {
   const page = await browser.newPage();
   const cells = (xml) => page.evaluate((text) => {

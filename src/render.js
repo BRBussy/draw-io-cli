@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join, normalize, extname } from "node:path";
 import he from "he";
 import { BOOTSTRAP_HTML, HOST_HTML, locateWebapp } from "./webapp.js";
-import { loadChromium, PLAYWRIGHT_INSTALL_FIX } from "./playwright.js";
+import { chromiumLaunchOptions, loadChromium, PLAYWRIGHT_INSTALL_FIX } from "./playwright.js";
 
 const MIME_TYPES = {
   ".html": "text/html",
@@ -145,10 +145,11 @@ export async function renderDiagram(xml, { formats, scale = 3, border = 10, weba
       `playwright not installed, so nothing can be rendered: ${PLAYWRIGHT_INSTALL_FIX}, then run drawio-cli doctor to check the render path`,
     );
   }
+  const launchOptions = chromiumLaunchOptions();
   const server = await serveWebapp(webappDir);
   let browser = null;
   try {
-    browser = await chromium.launch();
+    browser = await chromium.launch(launchOptions);
     const origin = `http://127.0.0.1:${server.address().port}`;
     const context = await browser.newContext();
     await blockEgress(context, origin);

@@ -47,6 +47,26 @@ The link points at this checkout, so the CLI finds its own dependencies and asse
 Add that `bin` directory to your shell's PATH if you want to invoke `drawio-cli`
 without the relative prefix. No system-wide or user-level installation is needed.
 
+### Chromium executable selection
+
+By default, rendering uses Playwright's browser selection, including
+`PLAYWRIGHT_BROWSERS_PATH`. To use a separately provisioned Chromium executable,
+set `DRAWIO_CHROMIUM_EXECUTABLE_PATH` to its file path. Both `render` and `doctor`
+respect this override:
+
+```sh
+export DRAWIO_CHROMIUM_EXECUTABLE_PATH="$(command -v chromium)"
+node src/cli.js doctor
+node src/cli.js render docs/architecture.drawio --png --svg
+```
+
+Relative paths resolve from the working directory. The value is a file path, not
+an executable name to search on PATH or a shell command with arguments. An empty
+or invalid override fails without falling back to Playwright's bundled browser.
+The executable must be compatible with the installed Playwright version; `doctor`
+only checks its presence, while a real render verifies that it launches and exports.
+The Playwright package is still required when using a custom executable.
+
 ### Asset selection and recovery
 
 Both `render` and `doctor` select assets in this order:
@@ -438,8 +458,10 @@ node src/cli.js diff-cells docs/deposit-flow.drawio docs/diagram-library.drawio 
 
 ### doctor
 
-Checks the render path: the extension webapp, the playwright package and its Chromium
-build. Exits 0 when all are found, otherwise names the missing piece and its fix.
+Checks the render path: the selected webapp, the Playwright package and the Chromium
+executable selected by `DRAWIO_CHROMIUM_EXECUTABLE_PATH` or Playwright's default.
+Exits 0 when all are found, otherwise names the missing piece and its fix. It does
+not launch the browser; use `render` to verify browser compatibility.
 
 ```
 node src/cli.js doctor

@@ -1,23 +1,15 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { locateWebapp } from "../src/webapp.js";
+import { createWebappFixture as fixture, requiredWebappFiles } from "./webapp-fixture.mjs";
 
 assert.throws(() => locateWebapp({ webapp: "missing-explicit-webapp" }), /webapp.*missing|missing.*webapp/i);
 console.log("webapp: invalid explicit selection refuses fallback");
 
 mkdirSync(new URL("../.task-evidence/", import.meta.url), { recursive: true });
 const root = mkdtempSync(new URL("../.task-evidence/webapp-", import.meta.url));
-const required = ["js/app.min.js", "js/PreConfig.js", "js/PostConfig.js", "js/extensions.min.js", "js/stencils.min.js", "js/shapes-14-6-5.min.js", "styles/grapheditor.css"];
-function fixture(path) {
-  assert.ok(required.length > 0);
-  for (const file of required) {
-    mkdirSync(dirname(join(path, file)), { recursive: true });
-    writeFileSync(join(path, file), "App.main=function(){}; Menus.prototype={}; EditorUi.VERSION=\"26.0.2\";");
-  }
-  return path;
-}
 try {
   const explicit = fixture(join(root, "explicit"));
   const local = fixture(join(root, "local"));
@@ -33,7 +25,7 @@ try {
   fixture(join(otherExtensions, "hediet.vscode-drawio-1.8.0/drawio/src/main/webapp"));
   assert.equal(locateWebapp({ ...options, standalone: join(root, "absent"), roots: [extensions, otherExtensions] }), newer);
   assert.equal(locateWebapp({ standalone: join(root, "absent"), roots: [], env: {} }), null);
-  for (const file of required) {
+  for (const file of requiredWebappFiles) {
     rmSync(join(explicit, file));
     assert.throws(() => locateWebapp({ ...options, webapp: explicit }), /webapp/);
     fixture(explicit);
